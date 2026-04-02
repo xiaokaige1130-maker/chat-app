@@ -302,6 +302,8 @@ function MainView({ user, socket, onLogout, onUserChange }) {
   const [messageSearch, setMessageSearch] = useState('');
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [profileForm, setProfileForm] = useState({
     nickname: user?.nickname || '',
     avatarUrl: user?.avatarUrl || '',
