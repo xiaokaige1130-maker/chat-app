@@ -60,6 +60,11 @@ function normalizeStore(store) {
     phone: typeof user.phone === 'string' ? user.phone : ''
   }));
 
+  normalized.messages = normalized.messages.map((message) => ({
+    ...message,
+    read_at: typeof message.read_at === 'string' ? message.read_at : null
+  }));
+
   normalized.counters.users = Math.max(
     normalized.counters.users,
     ...normalized.users.map((user) => Number(user.id) || 0),
@@ -103,6 +108,26 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function formatMessageTime(isoString) {
+  const date = new Date(isoString);
+  const now = new Date();
+  const diff = now - date;
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+  
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  if (isToday) {
+    return time;
+  } else if (isYesterday) {
+    return `昨天 ${time}`;
+  } else {
+    return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+  }
+}
+
 function toPublicUser(user) {
   return {
     id: user.id,
@@ -110,7 +135,9 @@ function toPublicUser(user) {
     nickname: user.nickname || '',
     avatarUrl: user.avatar_url || '',
     phone: user.phone || '',
-    created_at: user.created_at
+    created_at: user.created_at,
+    online: user.online || false,
+    lastSeen: user.last_seen || null
   };
 }
 
@@ -251,11 +278,42 @@ app.get('/api/contacts', authenticate, (req, res) => {
   const store = readStore();
   const contacts = store.contacts
     .filter((contact) => contact.user_id === req.userId)
-    .map((contact) => store.users.find((user) => user.id === contact.contact_id))
-    .filter(Boolean)
-    .map(toPublicUser);
+    .map((contact) => {
+      const user = store.users.find((entry) => entry.id === contact.contact_id);
+      if (!user) {
+        return null;
+      }
+
+      const conversation = store.messages
+        .filter((message) => (
+          (message.sender_id === req.userId && message.receiver_id === contact.contact_id) ||
+          (message.sender_id === contact.contact_id && message.receiver_id === req.userId)
+        ))
+        .sort((left, right) => left.id - right.id);
+
+      const lastMessage = conversation[conversation.length - 1] || null;
+      const unreadCount = conversation.filter(
+        (message) => message.sender_id === contact.contact_id && message.receiver_id === req.userId && !message.read_at
+      ).length;
+
+      return {
+        ...toPublicUser(user),
+        lastMessage: lastMessage?.content || '',
+        lastMessageAt: lastMessage?.created_at || '',
+        unreadCount
+      };
+    })
+    .filter(Boolean);
 
   res.json(contacts);
+});
+
+app.get('/api/users/online', authenticate, (req, res) => {
+  const store = readStore();
+  const onlineUsers = store.users
+    .filter((user) => user.online && user.id !== req.userId)
+    .map(toPublicUser);
+  res.json(onlineUsers);
 });
 
 app.post('/api/contacts', authenticate, (req, res) => {
@@ -309,6 +367,17 @@ app.get('/api/messages/:contactId', authenticate, (req, res) => {
     ))
     .sort((left, right) => left.id - right.id);
 
+  let changed = false;
+  for (const message of messages) {
+    if (message.sender_id === contactId && message.receiver_id === req.userId && !message.read_at) {
+      message.read_at = nowIso();
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeStore(store);
+  }
+
   res.json(messages);
 });
 
@@ -350,7 +419,20 @@ io.on('connection', (socket) => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const userId = decoded.userId;
+    
+    // Mark user as online
+    const store = readStore();
+    const user = store.users.find((u) => u.id === userId);
+    if (user) {
+      user.online = true;
+      user.last_seen = nowIso();
+      writeStore(store);
+    }
+    
     userSockets.set(userId, socket.id);
+    
+    // Broadcast online status to all connected users
+    io.emit('user-status', { userId, online: true });
 
     socket.on('message', (data) => {
       const receiverId = Number(data.receiverId);
@@ -366,7 +448,8 @@ io.on('connection', (socket) => {
         sender_id: userId,
         receiver_id: receiverId,
         content,
-        created_at: nowIso()
+        created_at: nowIso(),
+        read_at: null
       };
 
       store.messages.push(message);
@@ -382,6 +465,18 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
       userSockets.delete(userId);
+      
+      // Mark user as offline
+      const store = readStore();
+      const user = store.users.find((u) => u.id === userId);
+      if (user) {
+        user.online = false;
+        user.last_seen = nowIso();
+        writeStore(store);
+      }
+      
+      // Broadcast offline status
+      io.emit('user-status', { userId, online: false });
     });
   } catch {
     socket.disconnect();

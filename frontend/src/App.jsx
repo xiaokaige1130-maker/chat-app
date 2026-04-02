@@ -62,6 +62,46 @@ function formatTime(value) {
   });
 }
 
+function formatMessageTime(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+  
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  if (isToday) {
+    return time;
+  } else if (isYesterday) {
+    return `昨天 ${time}`;
+  } else {
+    return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+  }
+}
+
+function formatDayDivider(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  if (isToday) return '今天';
+  if (isYesterday) return '昨天';
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function shouldShowDayDivider(prev, current) {
+  if (!current?.created_at) return false;
+  if (!prev?.created_at) return true;
+  return new Date(prev.created_at).toDateString() !== new Date(current.created_at).toDateString();
+}
+
 function Avatar({ user, className = 'avatar' }) {
   if (user?.avatarUrl) {
     return <img className={`${className} image-avatar`} src={user.avatarUrl} alt={displayName(user)} />;
@@ -252,13 +292,16 @@ function LoginView({ onLogin }) {
 
 function MainView({ user, socket, onLogout, onUserChange }) {
   const [contacts, setContacts] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [selectedContact, setSelectedContact] = useState(null);
   const [messages, setMessages] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [conversationFilter, setConversationFilter] = useState('');
+  const [tabFilter, setTabFilter] = useState('all');
+  const [messageSearch, setMessageSearch] = useState('');
   const [messageInput, setMessageInput] = useState('');
-  const [loadingMessages, setLoadingMessages] = useState(false);
-  const [searching, setSearching] = useState(false);
+  const [sending, setSending] = useState(false);
   const [profileForm, setProfileForm] = useState({
     nickname: user?.nickname || '',
     avatarUrl: user?.avatarUrl || '',
@@ -280,6 +323,7 @@ function MainView({ user, socket, onLogout, onUserChange }) {
   useEffect(() => {
     hydrateCurrentUser();
     fetchContacts();
+    fetchOnlineUsers();
   }, []);
 
   useEffect(() => {
@@ -306,11 +350,25 @@ function MainView({ user, socket, onLogout, onUserChange }) {
         setMessages((current) => [...current, message]);
       }
     };
+    
+    const handleUserStatus = (payload) => {
+      if (payload.online) {
+        setOnlineUsers((prev) => new Set(prev).add(payload.userId));
+      } else {
+        setOnlineUsers((prev) => {
+          const next = new Set(prev);
+          next.delete(payload.userId);
+          return next;
+        });
+      }
+    };
 
     socket.on('message', handleIncomingMessage);
+    socket.on('user-status', handleUserStatus);
 
     return () => {
       socket.off('message', handleIncomingMessage);
+      socket.off('user-status', handleUserStatus);
     };
   }, [socket, selectedContact]);
 
@@ -327,7 +385,58 @@ function MainView({ user, socket, onLogout, onUserChange }) {
   }, [messages]);
 
   const activeContactMessages = useMemo(() => messages, [messages]);
+  const filteredContacts = useMemo(() => {
+    const query = conversationFilter.trim().toLowerCase();
+    let nextContacts = contacts;
 
+    if (tabFilter === 'online') {
+      nextContacts = nextContacts.filter((contact) => onlineUsers.has(contact.id));
+    } else if (tabFilter === 'unread') {
+      nextContacts = nextContacts.filter((contact) => contact.unreadCount > 0);
+    }
+
+    if (!query) {
+      return nextContacts;
+    }
+
+    return nextContacts.filter((contact) => {
+      const haystack = [
+        displayName(contact),
+        contact.username,
+        contact.phone,
+        contact.lastMessage
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [contacts, conversationFilter, tabFilter, onlineUsers]);
+
+  const filteredMessages = useMemo(() => {
+    const query = messageSearch.trim().toLowerCase();
+    if (!query) {
+      return activeContactMessages;
+    }
+
+    return activeContactMessages.filter((message) =>
+      String(message.content || '').toLowerCase().includes(query)
+    );
+  }, [activeContactMessages, messageSearch]);
+
+  async function fetchOnlineUsers() {
+    try {
+      const response = await fetch(apiUrl('/api/users/online'), {
+        headers: authHeaders()
+      });
+      const data = await response.json();
+      const onlineIds = new Set(data.map((u) => u.id));
+      setOnlineUsers(onlineIds);
+    } catch {
+      // Ignore errors
+    }
+  }
+  
   async function hydrateCurrentUser() {
     try {
       const response = await fetch(apiUrl('/api/me'), {
@@ -442,15 +551,21 @@ function MainView({ user, socket, onLogout, onUserChange }) {
 
   function sendMessage() {
     const content = messageInput.trim();
-    if (!content || !selectedContact || !socket) {
+    if (!content || !selectedContact || !socket || sending) {
       return;
     }
 
+    setSending(true);
     socket.emit('message', {
       receiverId: selectedContact.id,
       content
     });
     setMessageInput('');
+    setTimeout(() => setSending(false), 200);
+  }
+
+  function insertQuickEmoji(emoji) {
+    setMessageInput((current) => `${current}${emoji}`);
   }
 
   const selectedDisplayName = selectedContact ? displayName(selectedContact) : '';
@@ -567,24 +682,55 @@ function MainView({ user, socket, onLogout, onUserChange }) {
         <div className="panel contacts-panel">
           <div className="panel-title-row">
             <h3>最近联系人</h3>
-            <span>{contacts.length}</span>
+            <span>{filteredContacts.length}</span>
+          </div>
+
+          <div className="conversation-tabs">
+            <button className={`tab-pill ${tabFilter === 'all' ? 'active' : ''}`} onClick={() => setTabFilter('all')}>全部</button>
+            <button className={`tab-pill ${tabFilter === 'online' ? 'active' : ''}`} onClick={() => setTabFilter('online')}>在线</button>
+            <button className={`tab-pill ${tabFilter === 'unread' ? 'active' : ''}`} onClick={() => setTabFilter('unread')}>未读</button>
+          </div>
+
+          <div className="search-row conversation-filter-row">
+            <input
+              className="search-input"
+              type="text"
+              placeholder="筛选会话、联系人或最近消息"
+              value={conversationFilter}
+              onChange={(event) => setConversationFilter(event.target.value)}
+            />
           </div>
 
           <div className="contact-list">
-            {contacts.length > 0 ? contacts.map((contact) => (
-              <button
-                key={contact.id}
-                className={`contact-card ${selectedContact?.id === contact.id ? 'active' : ''}`}
-                onClick={() => selectContact(contact)}
-              >
-                <Avatar user={contact} />
-                <div className="contact-meta">
-                  <strong>{displayName(contact)}</strong>
-                  <span>@{contact.username}{contact.phone ? ` · ${contact.phone}` : ''}</span>
-                </div>
-              </button>
-            )) : (
-              <div className="empty-hint">你还没有联系人，先搜索并添加一位用户。</div>
+            {filteredContacts.length > 0 ? filteredContacts.map((contact) => {
+              const isOnline = onlineUsers.has(contact.id);
+              return (
+                <button
+                  key={contact.id}
+                  className={`contact-card ${selectedContact?.id === contact.id ? 'active' : ''}`}
+                  onClick={() => selectContact(contact)}
+                >
+                  <div style={{ position: 'relative' }}>
+                    <Avatar user={contact} />
+                    <span className={`online-indicator ${isOnline ? 'online' : 'offline'}`} />
+                  </div>
+                  <div className="contact-meta">
+                    <div className="contact-topline">
+                      <strong>{displayName(contact)}</strong>
+                      <span className="contact-time">{contact.lastMessageAt ? formatMessageTime(contact.lastMessageAt) : ''}</span>
+                    </div>
+                    <span>@{contact.username}{contact.phone ? ` · ${contact.phone}` : ''}</span>
+                    <div className="contact-bottomline">
+                      <span className={`status-text ${isOnline ? 'online' : 'offline'}`}>
+                        {contact.lastMessage || (isOnline ? '在线' : contact.lastSeen ? `上次在线 ${formatMessageTime(contact.lastSeen)}` : '离线')}
+                      </span>
+                      {contact.unreadCount > 0 ? <span className="unread-badge">{contact.unreadCount}</span> : null}
+                    </div>
+                  </div>
+                </button>
+              );
+            }) : (
+              <div className="empty-hint">没有匹配的联系人或会话。</div>
             )}
           </div>
         </div>
@@ -595,17 +741,33 @@ function MainView({ user, socket, onLogout, onUserChange }) {
           <>
             <header className="chat-topbar">
               <div className="chat-user">
-                <Avatar user={selectedContact} className="chat-avatar" />
+                <div style={{ position: 'relative' }}>
+                  <Avatar user={selectedContact} className="chat-avatar" />
+                  <span className={`online-indicator ${onlineUsers.has(selectedContact.id) ? 'online' : 'offline'}`} />
+                </div>
                 <div>
-                  <div className="badge subtle">当前会话</div>
+                  <div className="badge subtle">
+                    {onlineUsers.has(selectedContact.id) ? '在线' : '离线'}
+                  </div>
                   <h3>{selectedDisplayName}</h3>
                   <p className="topbar-meta">
                     @{selectedContact.username}
                     {selectedContact.phone ? ` · ${selectedContact.phone}` : ''}
+                    {!onlineUsers.has(selectedContact.id) && selectedContact.lastSeen && ` · 上次在线 ${formatMessageTime(selectedContact.lastSeen)}`}
                   </p>
                 </div>
               </div>
-              <span className="topbar-meta">共 {activeContactMessages.length} 条消息</span>
+              <div className="chat-topbar-actions">
+                <input
+                  className="message-search-input"
+                  type="text"
+                  placeholder="搜索当前会话消息"
+                  value={messageSearch}
+                  onChange={(event) => setMessageSearch(event.target.value)}
+                />
+                <button className="secondary-button compact">📎</button>
+                <button className="secondary-button compact">🖼️</button>
+              </div>
             </header>
 
             <section className="message-stage" ref={messageListRef}>
@@ -614,16 +776,27 @@ function MainView({ user, socket, onLogout, onUserChange }) {
                   <h3>正在加载消息</h3>
                   <p>稍等一下，会话记录马上就出来。</p>
                 </div>
-              ) : activeContactMessages.length > 0 ? (
-                activeContactMessages.map((message) => {
+              ) : filteredMessages.length > 0 ? (
+                filteredMessages.map((message, index) => {
                   const own = message.sender_id === user.id;
+                  const prev = index > 0 ? filteredMessages[index - 1] : null;
                   return (
-                    <div key={message.id} className={`message-row ${own ? 'mine' : 'theirs'}`}>
-                      <div className={`message-bubble ${own ? 'mine' : 'theirs'}`}>
-                        <div>{message.content}</div>
-                        <span>{formatTime(message.created_at)}</span>
+                    <>
+                      {shouldShowDayDivider(prev, message) ? (
+                        <div key={`divider-${message.id}`} className="day-divider">
+                          <span>{formatDayDivider(message.created_at)}</span>
+                        </div>
+                      ) : null}
+                      <div key={message.id} className={`message-row ${own ? 'mine' : 'theirs'}`}>
+                        <div className={`message-bubble ${own ? 'mine' : 'theirs'}`}>
+                          <div className="message-content">{message.content}</div>
+                          <div className="message-meta-row">
+                            <span className="message-time">{formatTime(message.created_at)}</span>
+                            {own ? <span className="message-read-state">{message.read_at ? '已读' : '已发送'}</span> : null}
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    </>
                   );
                 })
               ) : (
@@ -636,6 +809,11 @@ function MainView({ user, socket, onLogout, onUserChange }) {
             </section>
 
             <footer className="composer">
+              <div className="quick-emoji-row">
+                {['😀', '👍', '😂', '🎉', '❤️', '🙏'].map((emoji) => (
+                  <button key={emoji} className="emoji-button" onClick={() => insertQuickEmoji(emoji)}>{emoji}</button>
+                ))}
+              </div>
               <div className="composer-box">
                 <textarea
                   value={messageInput}
@@ -649,7 +827,9 @@ function MainView({ user, socket, onLogout, onUserChange }) {
                   placeholder="输入消息，按 Enter 发送，Shift + Enter 换行"
                   rows={3}
                 />
-                <button className="primary-button" onClick={sendMessage}>发送消息</button>
+                <button className="primary-button send-button" onClick={sendMessage} disabled={!messageInput.trim() || sending}>
+                  {sending ? '发送中...' : '发送'}
+                </button>
               </div>
             </footer>
           </>
