@@ -1,7 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
 
-const API_URL = 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
+
+function apiUrl(path) {
+  return `${API_BASE}${path}`;
+}
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
@@ -11,11 +15,12 @@ function App() {
 
   useEffect(() => {
     if (token) {
-      const newSocket = io('http://localhost:3001', {
+      const newSocket = io({
         auth: { token }
       });
       setSocket(newSocket);
       setView('main');
+      return () => newSocket.disconnect();
     }
   }, [token]);
 
@@ -54,7 +59,7 @@ function LoginView({ onLogin }) {
     setError('');
 
     try {
-      const res = await fetch(`${API_URL}/api/auth/${isRegister ? 'register' : 'login'}`, {
+      const res = await fetch(apiUrl(`/api/auth/${isRegister ? 'register' : 'login'}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -129,7 +134,7 @@ function MainView({ user, socket, onLogout }) {
   }, [socket, selectedContact]);
 
   const fetchContacts = async () => {
-    const res = await fetch(`${API_URL}/api/contacts`, {
+    const res = await fetch(apiUrl('/api/contacts'), {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     });
     const data = await res.json();
@@ -138,7 +143,7 @@ function MainView({ user, socket, onLogout }) {
 
   const selectContact = async (contact) => {
     setSelectedContact(contact);
-    const res = await fetch(`${API_URL}/api/messages/${contact.id}`, {
+    const res = await fetch(apiUrl(`/api/messages/${contact.id}`), {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     });
     const data = await res.json();
@@ -147,7 +152,7 @@ function MainView({ user, socket, onLogout }) {
 
   const searchUsers = async () => {
     if (!searchQuery.trim()) return;
-    const res = await fetch(`${API_URL}/api/users/search?q=${searchQuery}`, {
+    const res = await fetch(apiUrl(`/api/users/search?q=${encodeURIComponent(searchQuery)}`), {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     });
     const data = await res.json();
@@ -155,7 +160,7 @@ function MainView({ user, socket, onLogout }) {
   };
 
   const addContact = async (contactId) => {
-    await fetch(`${API_URL}/api/contacts`, {
+    await fetch(apiUrl('/api/contacts'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
