@@ -304,6 +304,7 @@ function MainView({ user, socket, onLogout, onUserChange }) {
   const [sending, setSending] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({
     nickname: user?.nickname || '',
     avatarUrl: user?.avatarUrl || '',
@@ -313,6 +314,7 @@ function MainView({ user, socket, onLogout, onUserChange }) {
   const [profileFeedback, setProfileFeedback] = useState('');
   const messageListRef = useRef(null);
   const messageEndRef = useRef(null);
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     setProfileForm({
@@ -345,11 +347,15 @@ function MainView({ user, socket, onLogout, onUserChange }) {
     }
 
     const handleIncomingMessage = (message) => {
+      fetchContacts();
+
       if (
         selectedContact &&
         (message.sender_id === selectedContact.id || message.receiver_id === selectedContact.id)
       ) {
         setMessages((current) => [...current, message]);
+      } else if (message.sender_id !== user.id) {
+        setNotice('收到一条新消息。');
       }
     };
     
@@ -368,11 +374,17 @@ function MainView({ user, socket, onLogout, onUserChange }) {
     socket.on('message', handleIncomingMessage);
     socket.on('user-status', handleUserStatus);
 
+    socket.on('contact_added', (contact) => {
+      fetchContacts();
+      setNotice(`${contact.username} 已将你添加为联系人。`);
+    });
+
     return () => {
       socket.off('message', handleIncomingMessage);
       socket.off('user-status', handleUserStatus);
+      socket.off('contact_added');
     };
-  }, [socket, selectedContact]);
+  }, [socket, selectedContact, user.id]);
 
   useEffect(() => {
     if (!messageListRef.current) {
@@ -543,6 +555,7 @@ function MainView({ user, socket, onLogout, onUserChange }) {
 
       onUserChange(data.user);
       setProfileFeedback('资料已保存');
+      setProfileDrawerOpen(false);
       await fetchContacts();
     } catch (error) {
       setProfileFeedback(error.message || '保存资料失败');
@@ -575,67 +588,82 @@ function MainView({ user, socket, onLogout, onUserChange }) {
   return (
     <div className="app-shell">
       <aside className="left-rail">
-        <div className="profile-card">
-          <div className="profile-top">
-            <Avatar user={user} className="profile-avatar" />
-            <div className="profile-summary">
-              <div className="badge subtle">在线</div>
+        <div className="rail-header panel compact-panel">
+          <button className="rail-menu-button" onClick={() => setProfileDrawerOpen((value) => !value)}>
+            ☰
+          </button>
+          <div className="rail-user-summary">
+            <Avatar user={user} className="profile-avatar compact-avatar" />
+            <div className="profile-summary compact-summary">
               <h2>{displayName(user)}</h2>
               <p>@{user.username}</p>
-              <div className="profile-meta">
-                <span>{user.phone ? `手机号 ${user.phone}` : '未设置手机号'}</span>
-              </div>
             </div>
           </div>
+        </div>
 
-          <div className="profile-editor">
-            <div className="panel-title-row">
-              <h3>个人资料</h3>
-              <span>会展示给联系人</span>
+        <div className={`profile-drawer ${profileDrawerOpen ? 'open' : ''}`}>
+          <div className="profile-card drawer-card">
+            <div className="profile-top">
+              <Avatar user={user} className="profile-avatar" />
+              <div className="profile-summary">
+                <div className="badge subtle">在线</div>
+                <h2>{displayName(user)}</h2>
+                <p>@{user.username}</p>
+                <div className="profile-meta">
+                  <span>{user.phone ? `手机号 ${user.phone}` : '未设置手机号'}</span>
+                </div>
+              </div>
             </div>
 
-            <div className="profile-grid">
-              <label className="field">
-                <span>昵称</span>
-                <input
-                  type="text"
-                  placeholder="例如：小凯"
-                  value={profileForm.nickname}
-                  onChange={(event) => setProfileForm((current) => ({ ...current, nickname: event.target.value }))}
-                  disabled={profileSaving}
-                />
-              </label>
+            <div className="profile-editor">
+              <div className="panel-title-row">
+                <h3>个人资料</h3>
+                <button className="text-button" onClick={() => setProfileDrawerOpen(false)}>收起</button>
+              </div>
 
-              <label className="field">
-                <span>头像地址</span>
-                <input
-                  type="text"
-                  placeholder="https://example.com/avatar.jpg"
-                  value={profileForm.avatarUrl}
-                  onChange={(event) => setProfileForm((current) => ({ ...current, avatarUrl: event.target.value }))}
-                  disabled={profileSaving}
-                />
-              </label>
+              <div className="profile-grid">
+                <label className="field">
+                  <span>昵称</span>
+                  <input
+                    type="text"
+                    placeholder="例如：小凯"
+                    value={profileForm.nickname}
+                    onChange={(event) => setProfileForm((current) => ({ ...current, nickname: event.target.value }))}
+                    disabled={profileSaving}
+                  />
+                </label>
 
-              <label className="field">
-                <span>手机号</span>
-                <input
-                  type="text"
-                  placeholder="请输入手机号"
-                  value={profileForm.phone}
-                  onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))}
-                  disabled={profileSaving}
-                />
-              </label>
-            </div>
+                <label className="field">
+                  <span>头像地址</span>
+                  <input
+                    type="text"
+                    placeholder="https://example.com/avatar.jpg"
+                    value={profileForm.avatarUrl}
+                    onChange={(event) => setProfileForm((current) => ({ ...current, avatarUrl: event.target.value }))}
+                    disabled={profileSaving}
+                  />
+                </label>
 
-            {profileFeedback ? <div className="inline-feedback">{profileFeedback}</div> : null}
+                <label className="field">
+                  <span>手机号</span>
+                  <input
+                    type="text"
+                    placeholder="请输入手机号"
+                    value={profileForm.phone}
+                    onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))}
+                    disabled={profileSaving}
+                  />
+                </label>
+              </div>
 
-            <div className="profile-actions">
-              <button className="primary-button" onClick={saveProfile} disabled={profileSaving}>
-                {profileSaving ? '保存中...' : '保存资料'}
-              </button>
-              <button className="danger-button" onClick={onLogout}>退出登录</button>
+              {profileFeedback ? <div className="inline-feedback">{profileFeedback}</div> : null}
+
+              <div className="profile-actions">
+                <button className="primary-button" onClick={saveProfile} disabled={profileSaving}>
+                  {profileSaving ? '保存中...' : '保存资料'}
+                </button>
+                <button className="danger-button" onClick={onLogout}>退出登录</button>
+              </div>
             </div>
           </div>
         </div>
@@ -739,6 +767,26 @@ function MainView({ user, socket, onLogout, onUserChange }) {
       </aside>
 
       <main className="chat-stage">
+        {notice ? (
+          <div
+            style={{
+              margin: '0 24px',
+              padding: '12px 16px',
+              borderRadius: '14px',
+              background: 'rgba(255, 233, 167, 0.35)',
+              border: '1px solid rgba(233, 190, 70, 0.45)',
+              color: '#6f5200',
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: '12px',
+              alignItems: 'center'
+            }}
+          >
+            <span>{notice}</span>
+            <button className="text-button" onClick={() => setNotice('')}>知道了</button>
+          </div>
+        ) : null}
+
         {selectedContact ? (
           <>
             <header className="chat-topbar">
@@ -767,8 +815,6 @@ function MainView({ user, socket, onLogout, onUserChange }) {
                   value={messageSearch}
                   onChange={(event) => setMessageSearch(event.target.value)}
                 />
-                <button className="secondary-button compact">📎</button>
-                <button className="secondary-button compact">🖼️</button>
               </div>
             </header>
 

@@ -344,7 +344,28 @@ app.post('/api/contacts', authenticate, (req, res) => {
     contact_id: contactId,
     created_at: nowIso()
   });
+
+  const reverseExists = store.contacts.find((contact) => contact.user_id === contactId && contact.contact_id === req.userId);
+  if (!reverseExists) {
+    store.contacts.push({
+      id: nextId(store, 'contacts'),
+      user_id: contactId,
+      contact_id: req.userId,
+      created_at: nowIso()
+    });
+  }
+
   writeStore(store);
+
+  const currentUser = store.users.find((user) => user.id === req.userId);
+  const receiverSocket = userSockets.get(contactId);
+  if (receiverSocket && currentUser) {
+    io.to(receiverSocket).emit('contact_added', {
+      id: currentUser.id,
+      username: currentUser.username,
+      created_at: currentUser.created_at
+    });
+  }
 
   res.json({ success: true });
 });
