@@ -91,12 +91,12 @@ function LoginView({ onLogin }) {
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Request failed');
+        throw new Error(data.error || '请求失败');
       }
 
       onLogin(data.token, { id: data.userId, username: data.username });
     } catch (error) {
-      setError(error.message || 'Request failed');
+      setError(error.message || '请求失败');
     } finally {
       setSubmitting(false);
     }
@@ -106,23 +106,24 @@ function LoginView({ onLogin }) {
     <div className="login-shell">
       <div className="login-panel">
         <div className="login-copy">
-          <span className="badge">Desktop-style Chat</span>
-          <h1>Chat App</h1>
+          <span className="badge">团队即时沟通</span>
+          <h1>轻聊</h1>
           <p>
-            一个更像即时通讯客户端的轻量聊天应用，支持注册、联系人管理和实时消息推送。
+            一个更接近桌面聊天客户端的轻量协作应用，先把注册、联系人管理和实时消息打磨顺手，
+            后面再继续扩展群聊、图片和移动端。
           </p>
           <div className="feature-list">
             <div>
               <strong>实时消息</strong>
-              <span>Socket.IO 即时送达</span>
+              <span>基于 Socket.IO，即发即达。</span>
             </div>
             <div>
-              <strong>联系人</strong>
-              <span>搜索、添加、快速会话</span>
+              <strong>联系人会话</strong>
+              <span>搜索、添加、进入会话一步完成。</span>
             </div>
             <div>
-              <strong>可桌面化</strong>
-              <span>可打包为 Windows EXE</span>
+              <strong>桌面可分发</strong>
+              <span>当前版本已经支持打包成 Windows EXE。</span>
             </div>
           </div>
         </div>
@@ -130,7 +131,11 @@ function LoginView({ onLogin }) {
         <div className="login-card">
           <div className="login-header">
             <h2>{isRegister ? '创建账号' : '账号登录'}</h2>
-            <p>{isRegister ? '先注册一个账号，再开始聊天。' : '输入账号后进入你的聊天工作台。'}</p>
+            <p>
+              {isRegister
+                ? '先注册一个账号，再进入你的聊天工作台。'
+                : '输入账号后即可进入会话列表。'}
+            </p>
           </div>
 
           <form className="login-form" onSubmit={handleSubmit}>
@@ -138,7 +143,7 @@ function LoginView({ onLogin }) {
               <span>用户名</span>
               <input
                 type="text"
-                placeholder="例如 xiaokaige"
+                placeholder="例如：xiaokaige"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 disabled={submitting}
@@ -159,7 +164,7 @@ function LoginView({ onLogin }) {
             {error ? <div className="form-error">{error}</div> : null}
 
             <button type="submit" className="primary-button" disabled={submitting}>
-              {submitting ? '处理中...' : isRegister ? '立即注册' : '进入聊天'}
+              {submitting ? '提交中...' : isRegister ? '立即注册' : '进入轻聊'}
             </button>
           </form>
 
@@ -305,15 +310,15 @@ function MainView({ user, socket, onLogout }) {
           <div>
             <div className="badge subtle">在线</div>
             <h2>{user.username}</h2>
-            <p>欢迎回来，开始新的会话。</p>
+            <p>欢迎回来，开始今天的沟通。</p>
           </div>
-          <button className="danger-button" onClick={onLogout}>退出</button>
+          <button className="danger-button" onClick={onLogout}>退出登录</button>
         </div>
 
         <div className="panel">
           <div className="panel-header">
             <h3>添加联系人</h3>
-            <span>{searching ? '搜索中...' : `${searchResults.length} 个结果`}</span>
+            <span>{searching ? '搜索中...' : `找到 ${searchResults.length} 个结果`}</span>
           </div>
 
           <div className="search-row">
@@ -340,18 +345,20 @@ function MainView({ user, socket, onLogout }) {
                     <strong>{entry.username}</strong>
                     <span>ID {entry.id}</span>
                   </div>
-                  <button className="secondary-button compact" onClick={() => addContact(entry.id)}>添加</button>
+                  <button className="secondary-button compact" onClick={() => addContact(entry.id)}>
+                    添加
+                  </button>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="empty-hint">搜索联系人后会显示在这里。</div>
+            <div className="empty-hint">搜索用户后，结果会显示在这里。</div>
           )}
         </div>
 
         <div className="panel contacts-panel">
           <div className="panel-header">
-            <h3>联系人</h3>
+            <h3>最近联系人</h3>
             <span>{contacts.length}</span>
           </div>
 
@@ -365,11 +372,11 @@ function MainView({ user, socket, onLogout }) {
                 <div className="avatar">{contact.username[0].toUpperCase()}</div>
                 <div className="contact-meta">
                   <strong>{contact.username}</strong>
-                  <span>点击查看会话</span>
+                  <span>点击进入会话</span>
                 </div>
               </button>
             )) : (
-              <div className="empty-hint">还没有联系人，先搜索并添加一个用户。</div>
+              <div className="empty-hint">你还没有联系人，先搜索并添加一位用户。</div>
             )}
           </div>
         </div>
@@ -380,17 +387,17 @@ function MainView({ user, socket, onLogout }) {
           <>
             <header className="chat-topbar">
               <div>
-                <div className="badge subtle">会话中</div>
+                <div className="badge subtle">当前会话</div>
                 <h3>{selectedContact.username}</h3>
               </div>
-              <span className="topbar-meta">{activeContactMessages.length} 条消息</span>
+              <span className="topbar-meta">共 {activeContactMessages.length} 条消息</span>
             </header>
 
             <section className="message-stage" ref={messageListRef}>
               {loadingMessages ? (
                 <div className="empty-state">
                   <h3>正在加载消息</h3>
-                  <p>稍等一下，会话记录马上出来。</p>
+                  <p>稍等一下，会话记录马上就出来。</p>
                 </div>
               ) : activeContactMessages.length > 0 ? (
                 activeContactMessages.map((message) => {
@@ -407,7 +414,7 @@ function MainView({ user, socket, onLogout }) {
               ) : (
                 <div className="empty-state">
                   <h3>还没有聊天记录</h3>
-                  <p>发出第一条消息，这里会自动滚到最新内容。</p>
+                  <p>发出第一条消息后，这里会自动滚动到最新内容。</p>
                 </div>
               )}
               <div ref={messageEndRef} />
@@ -424,7 +431,7 @@ function MainView({ user, socket, onLogout }) {
                       sendMessage();
                     }
                   }}
-                  placeholder="输入消息，Enter 发送，Shift + Enter 换行"
+                  placeholder="输入消息，按 Enter 发送，Shift + Enter 换行"
                   rows={3}
                 />
                 <button className="primary-button" onClick={sendMessage}>发送消息</button>
@@ -433,9 +440,9 @@ function MainView({ user, socket, onLogout }) {
           </>
         ) : (
           <div className="empty-state large">
-            <div className="badge">Chat Ready</div>
-            <h2>选择一个联系人开始聊天</h2>
-            <p>左侧先搜索联系人并添加，然后点击联系人进入聊天窗口。</p>
+            <div className="badge">准备就绪</div>
+            <h2>选择一位联系人开始聊天</h2>
+            <p>先在左侧搜索并添加联系人，再点击联系人进入聊天窗口。</p>
           </div>
         )}
       </main>
