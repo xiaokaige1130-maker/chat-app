@@ -1,10 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import './App.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 function apiUrl(path) {
   return `${API_BASE}${path}`;
+}
+
+function formatTime(value) {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function App() {
@@ -14,21 +27,27 @@ function App() {
   const [socket, setSocket] = useState(null);
 
   useEffect(() => {
-    if (token) {
-      const newSocket = io({
-        auth: { token }
-      });
-      setSocket(newSocket);
-      setView('main');
-      return () => newSocket.disconnect();
+    if (!token) {
+      return undefined;
     }
+
+    const nextSocket = io({
+      auth: { token }
+    });
+
+    setSocket(nextSocket);
+    setView('main');
+
+    return () => {
+      nextSocket.disconnect();
+    };
   }, [token]);
 
-  const handleLogin = (token, user) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(user));
-    setToken(token);
-    setUser(user);
+  const handleLogin = (nextToken, nextUser) => {
+    localStorage.setItem('token', nextToken);
+    localStorage.setItem('user', JSON.stringify(nextUser));
+    setToken(nextToken);
+    setUser(nextUser);
   };
 
   const handleLogout = () => {
@@ -53,54 +72,106 @@ function LoginView({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError('');
+    setSubmitting(true);
 
     try {
-      const res = await fetch(apiUrl(`/api/auth/${isRegister ? 'register' : 'login'}`), {
+      const response = await fetch(apiUrl(`/api/auth/${isRegister ? 'register' : 'login'}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({
+          username: username.trim(),
+          password
+        })
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Request failed');
+      }
 
       onLogin(data.token, { id: data.userId, username: data.username });
-    } catch (err) {
-      setError(err.message);
+    } catch (error) {
+      setError(error.message || 'Request failed');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h2 style={styles.title}>{isRegister ? 'Register' : 'Login'}</h2>
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <input
-            type="text"
-            placeholder="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            style={styles.input}
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={styles.input}
-          />
-          {error && <div style={styles.error}>{error}</div>}
-          <button type="submit" style={styles.button}>
-            {isRegister ? 'Register' : 'Login'}
+    <div className="login-shell">
+      <div className="login-panel">
+        <div className="login-copy">
+          <span className="badge">Desktop-style Chat</span>
+          <h1>Chat App</h1>
+          <p>
+            一个更像即时通讯客户端的轻量聊天应用，支持注册、联系人管理和实时消息推送。
+          </p>
+          <div className="feature-list">
+            <div>
+              <strong>实时消息</strong>
+              <span>Socket.IO 即时送达</span>
+            </div>
+            <div>
+              <strong>联系人</strong>
+              <span>搜索、添加、快速会话</span>
+            </div>
+            <div>
+              <strong>可桌面化</strong>
+              <span>可打包为 Windows EXE</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="login-card">
+          <div className="login-header">
+            <h2>{isRegister ? '创建账号' : '账号登录'}</h2>
+            <p>{isRegister ? '先注册一个账号，再开始聊天。' : '输入账号后进入你的聊天工作台。'}</p>
+          </div>
+
+          <form className="login-form" onSubmit={handleSubmit}>
+            <label className="field">
+              <span>用户名</span>
+              <input
+                type="text"
+                placeholder="例如 xiaokaige"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                disabled={submitting}
+              />
+            </label>
+
+            <label className="field">
+              <span>密码</span>
+              <input
+                type="password"
+                placeholder="请输入密码"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={submitting}
+              />
+            </label>
+
+            {error ? <div className="form-error">{error}</div> : null}
+
+            <button type="submit" className="primary-button" disabled={submitting}>
+              {submitting ? '处理中...' : isRegister ? '立即注册' : '进入聊天'}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setIsRegister((value) => !value)}
+            disabled={submitting}
+          >
+            {isRegister ? '已有账号，去登录' : '还没有账号，先注册'}
           </button>
-        </form>
-        <button onClick={() => setIsRegister(!isRegister)} style={styles.switchButton}>
-          {isRegister ? 'Already have account? Login' : 'No account? Register'}
-        </button>
+        </div>
       </div>
     </div>
   );
@@ -113,53 +184,93 @@ function MainView({ user, socket, onLogout }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [messageInput, setMessageInput] = useState('');
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const messageListRef = useRef(null);
+  const messageEndRef = useRef(null);
 
   useEffect(() => {
     fetchContacts();
   }, []);
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socket) {
+      return undefined;
+    }
 
-    socket.on('message', (message) => {
-      if (selectedContact && 
-          (message.sender_id === selectedContact.id || message.receiver_id === selectedContact.id)) {
-        setMessages((prev) => [...prev, message]);
+    const handleIncomingMessage = (message) => {
+      if (
+        selectedContact &&
+        (message.sender_id === selectedContact.id || message.receiver_id === selectedContact.id)
+      ) {
+        setMessages((current) => [...current, message]);
       }
-    });
+    };
+
+    socket.on('message', handleIncomingMessage);
 
     return () => {
-      socket.off('message');
+      socket.off('message', handleIncomingMessage);
     };
   }, [socket, selectedContact]);
 
-  const fetchContacts = async () => {
-    const res = await fetch(apiUrl('/api/contacts'), {
+  useEffect(() => {
+    if (!messageListRef.current) {
+      return;
+    }
+
+    const viewport = messageListRef.current;
+    const nearBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 140;
+    if (nearBottom || messages.length <= 1) {
+      messageEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [messages]);
+
+  const activeContactMessages = useMemo(() => messages, [messages]);
+
+  async function fetchContacts() {
+    const response = await fetch(apiUrl('/api/contacts'), {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     });
-    const data = await res.json();
-    setContacts(data);
-  };
+    const data = await response.json();
+    setContacts(Array.isArray(data) ? data : []);
+  }
 
-  const selectContact = async (contact) => {
+  async function selectContact(contact) {
     setSelectedContact(contact);
-    const res = await fetch(apiUrl(`/api/messages/${contact.id}`), {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-    });
-    const data = await res.json();
-    setMessages(data);
-  };
+    setLoadingMessages(true);
 
-  const searchUsers = async () => {
-    if (!searchQuery.trim()) return;
-    const res = await fetch(apiUrl(`/api/users/search?q=${encodeURIComponent(searchQuery)}`), {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-    });
-    const data = await res.json();
-    setSearchResults(data);
-  };
+    try {
+      const response = await fetch(apiUrl(`/api/messages/${contact.id}`), {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      setMessages(Array.isArray(data) ? data : []);
+    } finally {
+      setLoadingMessages(false);
+    }
+  }
 
-  const addContact = async (contactId) => {
+  async function searchUsers() {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    setSearching(true);
+
+    try {
+      const response = await fetch(apiUrl(`/api/users/search?q=${encodeURIComponent(searchQuery)}`), {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      setSearchResults(Array.isArray(data) ? data : []);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function addContact(contactId) {
     await fetch(apiUrl('/api/contacts'), {
       method: 'POST',
       headers: {
@@ -168,316 +279,168 @@ function MainView({ user, socket, onLogout }) {
       },
       body: JSON.stringify({ contactId })
     });
+
     setSearchQuery('');
     setSearchResults([]);
-    fetchContacts();
-  };
+    await fetchContacts();
+  }
 
-  const sendMessage = () => {
-    if (!messageInput.trim() || !selectedContact) return;
+  function sendMessage() {
+    const content = messageInput.trim();
+    if (!content || !selectedContact || !socket) {
+      return;
+    }
 
     socket.emit('message', {
       receiverId: selectedContact.id,
-      content: messageInput
+      content
     });
     setMessageInput('');
-  };
+  }
 
   return (
-    <div style={styles.mainContainer}>
-      <div style={styles.sidebar}>
-        <div style={styles.sidebarHeader}>
-          <span style={styles.username}>{user.username}</span>
-          <button onClick={onLogout} style={styles.logoutButton}>Logout</button>
-        </div>
-        <div style={styles.searchContainer}>
-          <input
-            type="text"
-            placeholder="Search users..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={styles.searchInput}
-            onKeyDown={(e) => e.key === 'Enter' && searchUsers()}
-          />
-          <button onClick={searchUsers} style={styles.searchButton}>Search</button>
-        </div>
-        {searchResults.length > 0 && (
-          <div style={styles.searchResults}>
-            {searchResults.map((u) => (
-              <div key={u.id} style={styles.searchResultItem}>
-                <span>{u.username}</span>
-                <button onClick={() => addContact(u.id)} style={styles.addButton}>Add</button>
-              </div>
-            ))}
+    <div className="app-shell">
+      <aside className="left-rail">
+        <div className="profile-card">
+          <div>
+            <div className="badge subtle">在线</div>
+            <h2>{user.username}</h2>
+            <p>欢迎回来，开始新的会话。</p>
           </div>
-        )}
-        <div style={styles.contactList}>
-          {contacts.map((contact) => (
-            <div
-              key={contact.id}
-              onClick={() => selectContact(contact)}
-              style={{
-                ...styles.contactItem,
-                backgroundColor: selectedContact?.id === contact.id ? '#e0e0e0' : 'transparent'
-              }}
-            >
-              <div style={styles.avatar}>{contact.username[0].toUpperCase()}</div>
-              <span>{contact.username}</span>
-            </div>
-          ))}
+          <button className="danger-button" onClick={onLogout}>退出</button>
         </div>
-      </div>
-      <div style={styles.chatArea}>
-        {selectedContact ? (
-          <>
-            <div style={styles.chatHeader}>
-              <span>{selectedContact.username}</span>
-            </div>
-            <div style={styles.messageList}>
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  style={{
-                    ...styles.messageBubble,
-                    alignSelf: msg.sender_id === user.id ? 'flex-end' : 'flex-start',
-                    backgroundColor: msg.sender_id === user.id ? '#007AFF' : '#f0f0f0',
-                    color: msg.sender_id === user.id ? '#fff' : '#000'
-                  }}
-                >
-                  {msg.content}
+
+        <div className="panel">
+          <div className="panel-header">
+            <h3>添加联系人</h3>
+            <span>{searching ? '搜索中...' : `${searchResults.length} 个结果`}</span>
+          </div>
+
+          <div className="search-row">
+            <input
+              className="search-input"
+              type="text"
+              placeholder="输入用户名搜索"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  searchUsers();
+                }
+              }}
+            />
+            <button className="primary-button compact" onClick={searchUsers}>搜索</button>
+          </div>
+
+          {searchResults.length > 0 ? (
+            <div className="result-list">
+              {searchResults.map((entry) => (
+                <div key={entry.id} className="result-item">
+                  <div>
+                    <strong>{entry.username}</strong>
+                    <span>ID {entry.id}</span>
+                  </div>
+                  <button className="secondary-button compact" onClick={() => addContact(entry.id)}>添加</button>
                 </div>
               ))}
             </div>
-            <div style={styles.inputContainer}>
-              <input
-                type="text"
-                value={messageInput}
-                onChange={(e) => setMessageInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                style={styles.messageInput}
-                placeholder="Type a message..."
-              />
-              <button onClick={sendMessage} style={styles.sendButton}>Send</button>
-            </div>
+          ) : (
+            <div className="empty-hint">搜索联系人后会显示在这里。</div>
+          )}
+        </div>
+
+        <div className="panel contacts-panel">
+          <div className="panel-header">
+            <h3>联系人</h3>
+            <span>{contacts.length}</span>
+          </div>
+
+          <div className="contact-list">
+            {contacts.length > 0 ? contacts.map((contact) => (
+              <button
+                key={contact.id}
+                className={`contact-card ${selectedContact?.id === contact.id ? 'active' : ''}`}
+                onClick={() => selectContact(contact)}
+              >
+                <div className="avatar">{contact.username[0].toUpperCase()}</div>
+                <div className="contact-meta">
+                  <strong>{contact.username}</strong>
+                  <span>点击查看会话</span>
+                </div>
+              </button>
+            )) : (
+              <div className="empty-hint">还没有联系人，先搜索并添加一个用户。</div>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      <main className="chat-stage">
+        {selectedContact ? (
+          <>
+            <header className="chat-topbar">
+              <div>
+                <div className="badge subtle">会话中</div>
+                <h3>{selectedContact.username}</h3>
+              </div>
+              <span className="topbar-meta">{activeContactMessages.length} 条消息</span>
+            </header>
+
+            <section className="message-stage" ref={messageListRef}>
+              {loadingMessages ? (
+                <div className="empty-state">
+                  <h3>正在加载消息</h3>
+                  <p>稍等一下，会话记录马上出来。</p>
+                </div>
+              ) : activeContactMessages.length > 0 ? (
+                activeContactMessages.map((message) => {
+                  const own = message.sender_id === user.id;
+                  return (
+                    <div key={message.id} className={`message-row ${own ? 'mine' : 'theirs'}`}>
+                      <div className={`message-bubble ${own ? 'mine' : 'theirs'}`}>
+                        <div>{message.content}</div>
+                        <span>{formatTime(message.created_at)}</span>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="empty-state">
+                  <h3>还没有聊天记录</h3>
+                  <p>发出第一条消息，这里会自动滚到最新内容。</p>
+                </div>
+              )}
+              <div ref={messageEndRef} />
+            </section>
+
+            <footer className="composer">
+              <div className="composer-box">
+                <textarea
+                  value={messageInput}
+                  onChange={(event) => setMessageInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder="输入消息，Enter 发送，Shift + Enter 换行"
+                  rows={3}
+                />
+                <button className="primary-button" onClick={sendMessage}>发送消息</button>
+              </div>
+            </footer>
           </>
         ) : (
-          <div style={styles.welcome}>
-            <h2>Welcome to Chat App</h2>
-            <p>Select a contact to start chatting</p>
+          <div className="empty-state large">
+            <div className="badge">Chat Ready</div>
+            <h2>选择一个联系人开始聊天</h2>
+            <p>左侧先搜索联系人并添加，然后点击联系人进入聊天窗口。</p>
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: '100vh',
-    backgroundColor: '#f5f5f5'
-  },
-  card: {
-    padding: '40px',
-    backgroundColor: '#fff',
-    borderRadius: '10px',
-    boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-    width: '300px'
-  },
-  title: {
-    margin: '0 0 20px 0',
-    textAlign: 'center',
-    color: '#333'
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px'
-  },
-  input: {
-    padding: '10px 15px',
-    borderRadius: '5px',
-    border: '1px solid #ddd',
-    fontSize: '14px'
-  },
-  button: {
-    padding: '12px',
-    backgroundColor: '#007AFF',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '16px'
-  },
-  switchButton: {
-    marginTop: '15px',
-    background: 'none',
-    border: 'none',
-    color: '#007AFF',
-    cursor: 'pointer',
-    fontSize: '14px'
-  },
-  error: {
-    color: '#ff3b30',
-    fontSize: '14px',
-    textAlign: 'center'
-  },
-  mainContainer: {
-    display: 'flex',
-    height: '100vh'
-  },
-  sidebar: {
-    width: '280px',
-    backgroundColor: '#fff',
-    borderRight: '1px solid #ddd',
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  sidebarHeader: {
-    padding: '15px',
-    borderBottom: '1px solid #ddd',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  username: {
-    fontWeight: 'bold',
-    fontSize: '16px'
-  },
-  logoutButton: {
-    padding: '5px 10px',
-    backgroundColor: '#ff3b30',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '12px'
-  },
-  searchContainer: {
-    padding: '10px',
-    display: 'flex',
-    gap: '5px'
-  },
-  searchInput: {
-    flex: 1,
-    padding: '8px',
-    borderRadius: '5px',
-    border: '1px solid #ddd',
-    fontSize: '14px'
-  },
-  searchButton: {
-    padding: '8px 12px',
-    backgroundColor: '#007AFF',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '14px'
-  },
-  searchResults: {
-    borderBottom: '1px solid #ddd',
-    maxHeight: '200px',
-    overflowY: 'auto'
-  },
-  searchResultItem: {
-    padding: '10px 15px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottom: '1px solid #f0f0f0'
-  },
-  addButton: {
-    padding: '5px 10px',
-    backgroundColor: '#34c759',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '12px'
-  },
-  contactList: {
-    flex: 1,
-    overflowY: 'auto'
-  },
-  contactItem: {
-    padding: '15px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    cursor: 'pointer',
-    borderBottom: '1px solid #f0f0f0'
-  },
-  avatar: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    backgroundColor: '#007AFF',
-    color: '#fff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 'bold'
-  },
-  chatArea: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: '#f9f9f9'
-  },
-  chatHeader: {
-    padding: '15px 20px',
-    backgroundColor: '#fff',
-    borderBottom: '1px solid #ddd',
-    fontWeight: 'bold',
-    fontSize: '16px'
-  },
-  messageList: {
-    flex: 1,
-    padding: '20px',
-    overflowY: 'auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px'
-  },
-  messageBubble: {
-    maxWidth: '70%',
-    padding: '10px 15px',
-    borderRadius: '15px',
-    fontSize: '14px'
-  },
-  inputContainer: {
-    padding: '15px 20px',
-    backgroundColor: '#fff',
-    borderTop: '1px solid #ddd',
-    display: 'flex',
-    gap: '10px'
-  },
-  messageInput: {
-    flex: 1,
-    padding: '10px 15px',
-    borderRadius: '20px',
-    border: '1px solid #ddd',
-    fontSize: '14px'
-  },
-  sendButton: {
-    padding: '10px 20px',
-    backgroundColor: '#007AFF',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '20px',
-    cursor: 'pointer',
-    fontSize: '14px'
-  },
-  welcome: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    color: '#888'
-  }
-};
 
 export default App;

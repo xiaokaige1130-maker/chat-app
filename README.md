@@ -21,6 +21,40 @@
 - 前端开发服务：`5173`
 - 后端 API：`3001`
 
+## Windows EXE
+
+现在项目已经补了一个 Electron 桌面壳，可以打包成 Windows `exe`。
+
+先在 Windows 机器项目根目录执行：
+
+```bash
+npm install
+```
+
+开发方式：
+
+```bash
+npm run desktop:dev
+```
+
+打包 Windows 安装包：
+
+```bash
+npm run desktop:build
+```
+
+打包完成后，产物会在：
+
+```text
+release/
+```
+
+桌面版逻辑：
+
+- Electron 启动时会拉起本地后端
+- 后端继续提供 API、Socket 和静态页面
+- 桌面窗口直接加载 `http://127.0.0.1:3001`
+
 ## Ubuntu 24.04 生产部署
 
 建议环境：

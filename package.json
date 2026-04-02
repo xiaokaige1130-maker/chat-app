@@ -1,0 +1,41 @@
+{
+  "name": "chat-app-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop wrapper and web deployment for chat-app",
+  "author": "xiaokaige",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "desktop:prepare": "npm.cmd install --prefix backend && npm.cmd install --prefix frontend && npm.cmd run build --prefix frontend",
+    "desktop:dev": "npm run desktop:prepare && electron .",
+    "desktop:build": "npm run desktop:prepare && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^35.1.5",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.xiaokaige.chatapp",
+    "productName": "Chat App",
+    "directories": {
+      "buildResources": "electron/assets",
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "backend/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "win": {
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

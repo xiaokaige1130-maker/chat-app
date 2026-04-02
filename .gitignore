@@ -41,6 +41,7 @@
 **/node_modules/
 frontend/dist/
 npm-install.log
+release/
 **/npm-debug.log*
 **/yarn-debug.log*
 **/yarn-error.log*
