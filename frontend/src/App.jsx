@@ -8,6 +8,48 @@ function apiUrl(path) {
   return `${API_BASE}${path}`;
 }
 
+function authHeaders() {
+  return {
+    Authorization: `Bearer ${localStorage.getItem('token')}`
+  };
+}
+
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem('user') || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function normalizeUser(user) {
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    username: user.username || '',
+    nickname: user.nickname || '',
+    avatarUrl: user.avatarUrl || '',
+    phone: user.phone || '',
+    created_at: user.created_at || ''
+  };
+}
+
+function displayName(user) {
+  if (!user) {
+    return '';
+  }
+
+  return (user.nickname || '').trim() || user.username || '';
+}
+
+function avatarLetter(user) {
+  const text = displayName(user);
+  return text ? text[0].toUpperCase() : '?';
+}
+
 function formatTime(value) {
   if (!value) {
     return '';
@@ -20,14 +62,23 @@ function formatTime(value) {
   });
 }
 
+function Avatar({ user, className = 'avatar' }) {
+  if (user?.avatarUrl) {
+    return <img className={`${className} image-avatar`} src={user.avatarUrl} alt={displayName(user)} />;
+  }
+
+  return <div className={className}>{avatarLetter(user)}</div>;
+}
+
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || 'null'));
-  const [view, setView] = useState('login');
+  const [user, setUser] = useState(normalizeUser(readStoredUser()));
+  const [view, setView] = useState(localStorage.getItem('token') ? 'main' : 'login');
   const [socket, setSocket] = useState(null);
 
   useEffect(() => {
     if (!token) {
+      setView('login');
       return undefined;
     }
 
@@ -43,11 +94,20 @@ function App() {
     };
   }, [token]);
 
+  const persistUser = (nextUser) => {
+    const normalized = normalizeUser(nextUser);
+    if (normalized) {
+      localStorage.setItem('user', JSON.stringify(normalized));
+    } else {
+      localStorage.removeItem('user');
+    }
+    setUser(normalized);
+  };
+
   const handleLogin = (nextToken, nextUser) => {
     localStorage.setItem('token', nextToken);
-    localStorage.setItem('user', JSON.stringify(nextUser));
     setToken(nextToken);
-    setUser(nextUser);
+    persistUser(nextUser);
   };
 
   const handleLogout = () => {
@@ -64,7 +124,7 @@ function App() {
     return <LoginView onLogin={handleLogin} />;
   }
 
-  return <MainView user={user} socket={socket} onLogout={handleLogout} />;
+  return <MainView user={user} socket={socket} onLogout={handleLogout} onUserChange={persistUser} />;
 }
 
 function LoginView({ onLogin }) {
@@ -94,7 +154,15 @@ function LoginView({ onLogin }) {
         throw new Error(data.error || '请求失败');
       }
 
-      onLogin(data.token, { id: data.userId, username: data.username });
+      const nextUser = data.user || {
+        id: data.userId,
+        username: data.username,
+        nickname: '',
+        avatarUrl: '',
+        phone: ''
+      };
+
+      onLogin(data.token, nextUser);
     } catch (error) {
       setError(error.message || '请求失败');
     } finally {
@@ -122,8 +190,8 @@ function LoginView({ onLogin }) {
               <span>搜索、添加、进入会话一步完成。</span>
             </div>
             <div>
-              <strong>桌面可分发</strong>
-              <span>当前版本已经支持打包成 Windows EXE。</span>
+              <strong>资料可自定义</strong>
+              <span>昵称、头像和手机号都可以在登录后修改。</span>
             </div>
           </div>
         </div>
@@ -182,7 +250,7 @@ function LoginView({ onLogin }) {
   );
 }
 
-function MainView({ user, socket, onLogout }) {
+function MainView({ user, socket, onLogout, onUserChange }) {
   const [contacts, setContacts] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -191,12 +259,39 @@ function MainView({ user, socket, onLogout }) {
   const [messageInput, setMessageInput] = useState('');
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    nickname: user?.nickname || '',
+    avatarUrl: user?.avatarUrl || '',
+    phone: user?.phone || ''
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileFeedback, setProfileFeedback] = useState('');
   const messageListRef = useRef(null);
   const messageEndRef = useRef(null);
 
   useEffect(() => {
+    setProfileForm({
+      nickname: user?.nickname || '',
+      avatarUrl: user?.avatarUrl || '',
+      phone: user?.phone || ''
+    });
+  }, [user]);
+
+  useEffect(() => {
+    hydrateCurrentUser();
     fetchContacts();
   }, []);
+
+  useEffect(() => {
+    if (!selectedContact) {
+      return;
+    }
+
+    const nextSelected = contacts.find((entry) => entry.id === selectedContact.id);
+    if (nextSelected) {
+      setSelectedContact(nextSelected);
+    }
+  }, [contacts, selectedContact]);
 
   useEffect(() => {
     if (!socket) {
@@ -233,9 +328,28 @@ function MainView({ user, socket, onLogout }) {
 
   const activeContactMessages = useMemo(() => messages, [messages]);
 
+  async function hydrateCurrentUser() {
+    try {
+      const response = await fetch(apiUrl('/api/me'), {
+        headers: authHeaders()
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+      if (data.user) {
+        onUserChange(data.user);
+      }
+    } catch {
+      // Ignore initial profile hydration failures and keep local state.
+    }
+  }
+
   async function fetchContacts() {
     const response = await fetch(apiUrl('/api/contacts'), {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      headers: authHeaders()
     });
     const data = await response.json();
     setContacts(Array.isArray(data) ? data : []);
@@ -247,7 +361,7 @@ function MainView({ user, socket, onLogout }) {
 
     try {
       const response = await fetch(apiUrl(`/api/messages/${contact.id}`), {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        headers: authHeaders()
       });
       const data = await response.json();
       setMessages(Array.isArray(data) ? data : []);
@@ -266,7 +380,7 @@ function MainView({ user, socket, onLogout }) {
 
     try {
       const response = await fetch(apiUrl(`/api/users/search?q=${encodeURIComponent(searchQuery)}`), {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        headers: authHeaders()
       });
       const data = await response.json();
       setSearchResults(Array.isArray(data) ? data : []);
@@ -276,18 +390,54 @@ function MainView({ user, socket, onLogout }) {
   }
 
   async function addContact(contactId) {
-    await fetch(apiUrl('/api/contacts'), {
+    const response = await fetch(apiUrl('/api/contacts'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`
+        ...authHeaders()
       },
       body: JSON.stringify({ contactId })
     });
 
+    const data = await response.json();
+    if (!response.ok) {
+      setProfileFeedback(data.error || '添加联系人失败');
+      return;
+    }
+
     setSearchQuery('');
     setSearchResults([]);
+    setProfileFeedback('');
     await fetchContacts();
+  }
+
+  async function saveProfile() {
+    setProfileSaving(true);
+    setProfileFeedback('');
+
+    try {
+      const response = await fetch(apiUrl('/api/me'), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders()
+        },
+        body: JSON.stringify(profileForm)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '保存资料失败');
+      }
+
+      onUserChange(data.user);
+      setProfileFeedback('资料已保存');
+      await fetchContacts();
+    } catch (error) {
+      setProfileFeedback(error.message || '保存资料失败');
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   function sendMessage() {
@@ -303,20 +453,78 @@ function MainView({ user, socket, onLogout }) {
     setMessageInput('');
   }
 
+  const selectedDisplayName = selectedContact ? displayName(selectedContact) : '';
+
   return (
     <div className="app-shell">
       <aside className="left-rail">
         <div className="profile-card">
-          <div>
-            <div className="badge subtle">在线</div>
-            <h2>{user.username}</h2>
-            <p>欢迎回来，开始今天的沟通。</p>
+          <div className="profile-top">
+            <Avatar user={user} className="profile-avatar" />
+            <div className="profile-summary">
+              <div className="badge subtle">在线</div>
+              <h2>{displayName(user)}</h2>
+              <p>@{user.username}</p>
+              <div className="profile-meta">
+                <span>{user.phone ? `手机号 ${user.phone}` : '未设置手机号'}</span>
+              </div>
+            </div>
           </div>
-          <button className="danger-button" onClick={onLogout}>退出登录</button>
+
+          <div className="profile-editor">
+            <div className="panel-title-row">
+              <h3>个人资料</h3>
+              <span>会展示给联系人</span>
+            </div>
+
+            <div className="profile-grid">
+              <label className="field">
+                <span>昵称</span>
+                <input
+                  type="text"
+                  placeholder="例如：小凯"
+                  value={profileForm.nickname}
+                  onChange={(event) => setProfileForm((current) => ({ ...current, nickname: event.target.value }))}
+                  disabled={profileSaving}
+                />
+              </label>
+
+              <label className="field">
+                <span>头像地址</span>
+                <input
+                  type="text"
+                  placeholder="https://example.com/avatar.jpg"
+                  value={profileForm.avatarUrl}
+                  onChange={(event) => setProfileForm((current) => ({ ...current, avatarUrl: event.target.value }))}
+                  disabled={profileSaving}
+                />
+              </label>
+
+              <label className="field">
+                <span>手机号</span>
+                <input
+                  type="text"
+                  placeholder="请输入手机号"
+                  value={profileForm.phone}
+                  onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))}
+                  disabled={profileSaving}
+                />
+              </label>
+            </div>
+
+            {profileFeedback ? <div className="inline-feedback">{profileFeedback}</div> : null}
+
+            <div className="profile-actions">
+              <button className="primary-button" onClick={saveProfile} disabled={profileSaving}>
+                {profileSaving ? '保存中...' : '保存资料'}
+              </button>
+              <button className="danger-button" onClick={onLogout}>退出登录</button>
+            </div>
+          </div>
         </div>
 
         <div className="panel">
-          <div className="panel-header">
+          <div className="panel-title-row">
             <h3>添加联系人</h3>
             <span>{searching ? '搜索中...' : `找到 ${searchResults.length} 个结果`}</span>
           </div>
@@ -325,7 +533,7 @@ function MainView({ user, socket, onLogout }) {
             <input
               className="search-input"
               type="text"
-              placeholder="输入用户名搜索"
+              placeholder="输入用户名、昵称或手机号"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -342,8 +550,8 @@ function MainView({ user, socket, onLogout }) {
               {searchResults.map((entry) => (
                 <div key={entry.id} className="result-item">
                   <div>
-                    <strong>{entry.username}</strong>
-                    <span>ID {entry.id}</span>
+                    <strong>{displayName(entry)}</strong>
+                    <span>@{entry.username}{entry.phone ? ` · ${entry.phone}` : ''}</span>
                   </div>
                   <button className="secondary-button compact" onClick={() => addContact(entry.id)}>
                     添加
@@ -352,12 +560,12 @@ function MainView({ user, socket, onLogout }) {
               ))}
             </div>
           ) : (
-            <div className="empty-hint">搜索用户后，结果会显示在这里。</div>
+            <div className="empty-hint">搜索后会在这里显示可添加的联系人。</div>
           )}
         </div>
 
         <div className="panel contacts-panel">
-          <div className="panel-header">
+          <div className="panel-title-row">
             <h3>最近联系人</h3>
             <span>{contacts.length}</span>
           </div>
@@ -369,10 +577,10 @@ function MainView({ user, socket, onLogout }) {
                 className={`contact-card ${selectedContact?.id === contact.id ? 'active' : ''}`}
                 onClick={() => selectContact(contact)}
               >
-                <div className="avatar">{contact.username[0].toUpperCase()}</div>
+                <Avatar user={contact} />
                 <div className="contact-meta">
-                  <strong>{contact.username}</strong>
-                  <span>点击进入会话</span>
+                  <strong>{displayName(contact)}</strong>
+                  <span>@{contact.username}{contact.phone ? ` · ${contact.phone}` : ''}</span>
                 </div>
               </button>
             )) : (
@@ -386,9 +594,16 @@ function MainView({ user, socket, onLogout }) {
         {selectedContact ? (
           <>
             <header className="chat-topbar">
-              <div>
-                <div className="badge subtle">当前会话</div>
-                <h3>{selectedContact.username}</h3>
+              <div className="chat-user">
+                <Avatar user={selectedContact} className="chat-avatar" />
+                <div>
+                  <div className="badge subtle">当前会话</div>
+                  <h3>{selectedDisplayName}</h3>
+                  <p className="topbar-meta">
+                    @{selectedContact.username}
+                    {selectedContact.phone ? ` · ${selectedContact.phone}` : ''}
+                  </p>
+                </div>
               </div>
               <span className="topbar-meta">共 {activeContactMessages.length} 条消息</span>
             </header>
@@ -442,7 +657,7 @@ function MainView({ user, socket, onLogout }) {
           <div className="empty-state large">
             <div className="badge">准备就绪</div>
             <h2>选择一位联系人开始聊天</h2>
-            <p>先在左侧搜索并添加联系人，再点击联系人进入聊天窗口。</p>
+            <p>先在左侧补全资料并添加联系人，再点击联系人进入聊天窗口。</p>
           </div>
         )}
       </main>

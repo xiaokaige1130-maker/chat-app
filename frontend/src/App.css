@@ -28,6 +28,10 @@ button {
   cursor: pointer;
 }
 
+img {
+  display: block;
+}
+
 .login-shell,
 .app-shell {
   min-height: 100vh;
@@ -43,7 +47,7 @@ button {
   display: grid;
   grid-template-columns: 1.1fr 420px;
   gap: 24px;
-  width: min(1100px, 100%);
+  width: min(1120px, 100%);
 }
 
 .login-copy,
@@ -71,21 +75,23 @@ button {
 .login-copy h1,
 .login-header h2,
 .chat-topbar h3,
-.profile-card h2,
+.profile-summary h2,
 .empty-state h2,
-.empty-state h3 {
+.empty-state h3,
+.panel-title-row h3 {
   margin: 0;
 }
 
 .login-copy p,
 .login-header p,
-.profile-card p,
+.profile-summary p,
 .empty-state p,
-.panel-header span,
+.panel-title-row span,
 .result-item span,
 .contact-meta span,
 .topbar-meta,
-.message-bubble span {
+.message-bubble span,
+.profile-meta span {
   color: #64748b;
 }
 
@@ -114,7 +120,9 @@ button {
 .panel,
 .contacts-panel,
 .chat-stage,
-.composer-box {
+.composer-box,
+.profile-editor,
+.profile-grid {
   display: grid;
   gap: 16px;
 }
@@ -163,7 +171,7 @@ button {
 }
 
 .danger-button {
-  padding: 10px 14px;
+  padding: 12px 16px;
   background: rgba(239, 68, 68, 0.12);
   color: #b91c1c;
 }
@@ -206,16 +214,22 @@ button {
   color: #475569;
 }
 
-.form-error {
+.form-error,
+.inline-feedback {
   padding: 12px 14px;
   border-radius: 14px;
   background: rgba(239, 68, 68, 0.1);
   color: #b91c1c;
 }
 
+.inline-feedback {
+  background: rgba(47, 124, 255, 0.1);
+  color: #1d4ed8;
+}
+
 .app-shell {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-columns: 400px minmax(0, 1fr);
   gap: 18px;
   padding: 18px;
 }
@@ -231,20 +245,42 @@ button {
 .left-rail {
   padding: 18px;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
   max-height: calc(100vh - 36px);
 }
 
 .profile-card {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 18px;
   padding: 18px;
-  border-radius: 22px;
+  border-radius: 24px;
   background: linear-gradient(180deg, rgba(236, 244, 255, 0.92), rgba(248, 251, 255, 0.72));
 }
 
-.panel {
+.profile-top {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.profile-summary {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.profile-summary p,
+.profile-meta {
+  margin: 0;
+}
+
+.profile-editor {
+  padding-top: 4px;
+}
+
+.panel,
+.profile-editor {
   padding: 18px;
   border-radius: 22px;
   background: rgba(247, 250, 255, 0.86);
@@ -255,15 +291,21 @@ button {
   min-height: 0;
 }
 
-.panel-header {
+.panel-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.panel-header h3 {
-  margin: 0;
+.profile-grid {
+  grid-template-columns: 1fr;
+}
+
+.profile-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
 }
 
 .search-row {
@@ -280,7 +322,7 @@ button {
 }
 
 .result-list {
-  max-height: 180px;
+  max-height: 190px;
 }
 
 .contact-list {
@@ -323,7 +365,9 @@ button {
   border-color: rgba(47, 124, 255, 0.28);
 }
 
-.avatar {
+.avatar,
+.profile-avatar,
+.chat-avatar {
   width: 42px;
   height: 42px;
   border-radius: 14px;
@@ -332,6 +376,24 @@ button {
   background: linear-gradient(135deg, #2f7cff, #29b8b8);
   color: #fff;
   font-weight: 800;
+  flex: 0 0 auto;
+}
+
+.profile-avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  font-size: 22px;
+}
+
+.chat-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+}
+
+.image-avatar {
+  object-fit: cover;
 }
 
 .chat-stage {
@@ -351,6 +413,17 @@ button {
   gap: 16px;
   align-items: center;
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.chat-user {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.chat-user > div {
+  display: grid;
+  gap: 6px;
 }
 
 .message-stage {
@@ -441,7 +514,7 @@ button {
   color: #64748b;
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1180px) {
   .login-panel,
   .app-shell {
     grid-template-columns: 1fr;
@@ -455,5 +528,27 @@ button {
 
   .chat-stage {
     min-height: 70vh;
+  }
+}
+
+@media (max-width: 720px) {
+  .login-shell,
+  .app-shell {
+    padding: 12px;
+  }
+
+  .profile-actions,
+  .composer-box,
+  .search-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .message-bubble {
+    max-width: 88%;
   }
 }

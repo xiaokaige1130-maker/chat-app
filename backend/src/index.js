@@ -41,9 +41,52 @@ function ensureStore() {
   }
 }
 
+function normalizeStore(store) {
+  const normalized = {
+    counters: {
+      users: Number(store?.counters?.users || 0),
+      contacts: Number(store?.counters?.contacts || 0),
+      messages: Number(store?.counters?.messages || 0)
+    },
+    users: Array.isArray(store?.users) ? store.users : [],
+    contacts: Array.isArray(store?.contacts) ? store.contacts : [],
+    messages: Array.isArray(store?.messages) ? store.messages : []
+  };
+
+  normalized.users = normalized.users.map((user) => ({
+    ...user,
+    nickname: typeof user.nickname === 'string' ? user.nickname : '',
+    avatar_url: typeof user.avatar_url === 'string' ? user.avatar_url : '',
+    phone: typeof user.phone === 'string' ? user.phone : ''
+  }));
+
+  normalized.counters.users = Math.max(
+    normalized.counters.users,
+    ...normalized.users.map((user) => Number(user.id) || 0),
+    0
+  );
+  normalized.counters.contacts = Math.max(
+    normalized.counters.contacts,
+    ...normalized.contacts.map((contact) => Number(contact.id) || 0),
+    0
+  );
+  normalized.counters.messages = Math.max(
+    normalized.counters.messages,
+    ...normalized.messages.map((message) => Number(message.id) || 0),
+    0
+  );
+
+  return normalized;
+}
+
 function readStore() {
   ensureStore();
-  return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+  const store = normalizeStore(raw);
+  if (JSON.stringify(raw) !== JSON.stringify(store)) {
+    writeStore(store);
+  }
+  return store;
 }
 
 function writeStore(store) {
@@ -58,6 +101,44 @@ function nextId(store, key) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function toPublicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    nickname: user.nickname || '',
+    avatarUrl: user.avatar_url || '',
+    phone: user.phone || '',
+    created_at: user.created_at
+  };
+}
+
+function validateProfileInput(payload) {
+  const nickname = String(payload.nickname || '').trim();
+  const avatarUrl = String(payload.avatarUrl || '').trim();
+  const phone = String(payload.phone || '').trim();
+
+  if (nickname.length > 24) {
+    return { error: 'Nickname must be at most 24 characters' };
+  }
+
+  if (phone && !/^[0-9+\-() ]{6,20}$/.test(phone)) {
+    return { error: 'Phone format is invalid' };
+  }
+
+  if (avatarUrl) {
+    try {
+      const url = new URL(avatarUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) {
+        return { error: 'Avatar URL must start with http or https' };
+      }
+    } catch {
+      return { error: 'Avatar URL is invalid' };
+    }
+  }
+
+  return { nickname, avatarUrl, phone };
 }
 
 app.use(cors({ origin: true }));
@@ -101,6 +182,9 @@ app.post('/api/auth/register', async (req, res) => {
   const user = {
     id: userId,
     username,
+    nickname: '',
+    avatar_url: '',
+    phone: '',
     password_hash: passwordHash,
     created_at: nowIso()
   };
@@ -109,7 +193,7 @@ app.post('/api/auth/register', async (req, res) => {
   writeStore(store);
 
   const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({ token, userId, username });
+  res.json({ token, user: toPublicUser(user) });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -128,7 +212,39 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({ token, userId: user.id, username: user.username });
+  res.json({ token, user: toPublicUser(user) });
+});
+
+app.get('/api/me', authenticate, (req, res) => {
+  const store = readStore();
+  const user = store.users.find((entry) => entry.id === req.userId);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  res.json({ user: toPublicUser(user) });
+});
+
+app.patch('/api/me', authenticate, (req, res) => {
+  const validated = validateProfileInput(req.body);
+  if (validated.error) {
+    return res.status(400).json({ error: validated.error });
+  }
+
+  const store = readStore();
+  const user = store.users.find((entry) => entry.id === req.userId);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  user.nickname = validated.nickname;
+  user.avatar_url = validated.avatarUrl;
+  user.phone = validated.phone;
+
+  writeStore(store);
+  res.json({ user: toPublicUser(user) });
 });
 
 app.get('/api/contacts', authenticate, (req, res) => {
@@ -137,11 +253,7 @@ app.get('/api/contacts', authenticate, (req, res) => {
     .filter((contact) => contact.user_id === req.userId)
     .map((contact) => store.users.find((user) => user.id === contact.contact_id))
     .filter(Boolean)
-    .map((user) => ({
-      id: user.id,
-      username: user.username,
-      created_at: user.created_at
-    }));
+    .map(toPublicUser);
 
   res.json(contacts);
 });
@@ -208,13 +320,20 @@ app.get('/api/users/search', authenticate, (req, res) => {
 
   const store = readStore();
   const users = store.users
-    .filter((user) => user.id !== req.userId && user.username.toLowerCase().includes(q))
+    .filter((user) => {
+      if (user.id === req.userId) {
+        return false;
+      }
+
+      const haystack = [user.username, user.nickname, user.phone]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(q);
+    })
     .slice(0, 10)
-    .map((user) => ({
-      id: user.id,
-      username: user.username,
-      created_at: user.created_at
-    }));
+    .map(toPublicUser);
 
   res.json(users);
 });
