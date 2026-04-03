@@ -109,7 +109,10 @@ release/
 
 # Local runtime data
 backend/chat.db
+backend/chat.db-shm
+backend/chat.db-wal
 backend/data.json
+.deploy/
 
 # Environment and secrets
 **/.env
