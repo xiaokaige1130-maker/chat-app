@@ -1,0 +1,8 @@
+{
+  "appId": "com.xiaokaige.chatapp",
+  "appName": "虾聊",
+  "webDir": "frontend/dist",
+  "server": {
+    "androidScheme": "http"
+  }
+}

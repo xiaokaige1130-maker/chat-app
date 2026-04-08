@@ -3,12 +3,59 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
+const SERVER_STORAGE_KEY = 'chat-server-base';
 const THEME_STORAGE_KEY = 'chat-theme-mode';
 const SOUND_STORAGE_KEY = 'chat-sound-enabled';
 const NOTIFICATION_STORAGE_KEY = 'chat-notification-enabled';
 
-function apiUrl(path) {
-  return `${API_BASE}${path}`;
+function normalizeServerBase(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  const withProtocol = /^[a-z]+:\/\//i.test(raw) ? raw : `http://${raw}`;
+
+  try {
+    const url = new URL(withProtocol);
+    const pathname = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+    return `${url.origin}${pathname}`;
+  } catch {
+    return '';
+  }
+}
+
+function canUseRelativeApi() {
+  return typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol);
+}
+
+function defaultServerBase() {
+  if (API_BASE) {
+    return normalizeServerBase(API_BASE);
+  }
+
+  if (canUseRelativeApi()) {
+    return '';
+  }
+
+  return '';
+}
+
+function readServerBase() {
+  const stored = normalizeServerBase(localStorage.getItem(SERVER_STORAGE_KEY));
+  if (stored) {
+    return stored;
+  }
+
+  return defaultServerBase();
+}
+
+function apiUrl(serverBase, path) {
+  return `${serverBase || ''}${path}`;
+}
+
+function socketUrl(serverBase) {
+  return serverBase || undefined;
 }
 
 function authHeaders() {
@@ -146,6 +193,7 @@ function GroupAvatar({ name, className = 'avatar' }) {
 }
 
 function App() {
+  const [serverBase, setServerBase] = useState(readServerBase());
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [user, setUser] = useState(normalizeUser(readStoredUser()));
   const [view, setView] = useState(localStorage.getItem('token') ? 'main' : 'login');
@@ -155,12 +203,26 @@ function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(readBooleanSetting(NOTIFICATION_STORAGE_KEY, true));
 
   useEffect(() => {
+    if (serverBase) {
+      localStorage.setItem(SERVER_STORAGE_KEY, serverBase);
+      return;
+    }
+
+    localStorage.removeItem(SERVER_STORAGE_KEY);
+  }, [serverBase]);
+
+  useEffect(() => {
     if (!token) {
       setView('login');
       return undefined;
     }
 
-    const nextSocket = io({
+    if (!serverBase && !canUseRelativeApi()) {
+      setView('login');
+      return undefined;
+    }
+
+    const nextSocket = io(socketUrl(serverBase), {
       auth: { token }
     });
 
@@ -208,7 +270,8 @@ function App() {
     setUser(normalized);
   };
 
-  const handleLogin = (nextToken, nextUser) => {
+  const handleLogin = (nextToken, nextUser, nextServerBase) => {
+    setServerBase(nextServerBase);
     localStorage.setItem('token', nextToken);
     setToken(nextToken);
     persistUser(nextUser);
@@ -225,13 +288,14 @@ function App() {
   };
 
   if (view === 'login') {
-    return <LoginView onLogin={handleLogin} />;
+    return <LoginView onLogin={handleLogin} serverBase={serverBase} onServerBaseChange={setServerBase} />;
   }
 
   return (
     <MainView
       user={user}
       socket={socket}
+      serverBase={serverBase}
       onLogout={handleLogout}
       onUserChange={persistUser}
       themeMode={themeMode}
@@ -244,12 +308,17 @@ function App() {
   );
 }
 
-function LoginView({ onLogin }) {
+function LoginView({ onLogin, serverBase, onServerBaseChange }) {
   const [isRegister, setIsRegister] = useState(false);
+  const [serverInput, setServerInput] = useState(serverBase);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setServerInput(serverBase);
+  }, [serverBase]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -257,7 +326,13 @@ function LoginView({ onLogin }) {
     setSubmitting(true);
 
     try {
-      const response = await fetch(apiUrl(`/api/auth/${isRegister ? 'register' : 'login'}`), {
+      const nextServerBase = normalizeServerBase(serverInput);
+
+      if (!nextServerBase && !canUseRelativeApi()) {
+        throw new Error('请先填写服务器地址');
+      }
+
+      const response = await fetch(apiUrl(nextServerBase, `/api/auth/${isRegister ? 'register' : 'login'}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -279,7 +354,8 @@ function LoginView({ onLogin }) {
         phone: ''
       };
 
-      onLogin(data.token, nextUser);
+      onServerBaseChange(nextServerBase);
+      onLogin(data.token, nextUser, nextServerBase);
     } catch (error) {
       setError(error.message || '请求失败');
     } finally {
@@ -291,39 +367,84 @@ function LoginView({ onLogin }) {
     <div className="login-shell">
       <div className="login-panel">
         <div className="login-copy">
-          <span className="badge">团队即时沟通</span>
-          <h1>虾聊</h1>
-          <p>
-            一个更接近桌面聊天客户端的轻量协作应用，先把注册、联系人管理和实时消息打磨顺手，
-            后面再继续扩展群聊、图片和移动端。
-          </p>
+          <div className="login-brand-lockup">
+            <div className="login-mark" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            <div className="login-brand-copy">
+              <span className="badge">XIALIAO MOBILE</span>
+              <h1>虾聊</h1>
+              <p>更像安卓 App 的即时通讯工作台，打开就进会话，界面紧凑，信息直接。</p>
+            </div>
+          </div>
+          <div className="login-stats">
+            <div>
+              <strong>IM</strong>
+              <span>单聊 / 群聊 / 在线状态</span>
+            </div>
+            <div>
+              <strong>SYNC</strong>
+              <span>联系人随账号同步，不再绑浏览器</span>
+            </div>
+            <div>
+              <strong>LIVE</strong>
+              <span>实时消息、提示音、通知、主题切换</span>
+            </div>
+          </div>
           <div className="feature-list">
             <div>
-              <strong>实时消息</strong>
-              <span>基于 Socket.IO，即发即达。</span>
+              <strong>即时会话</strong>
+              <span>Socket.IO 实时连接，打开就是消息流。</span>
             </div>
             <div>
-              <strong>联系人会话</strong>
-              <span>搜索、添加、进入会话一步完成。</span>
+              <strong>联系人工作台</strong>
+              <span>搜索、添加、筛选、建群收在同一侧边区。</span>
             </div>
             <div>
-              <strong>小凯哥</strong>
-              <span>email: xiaokaige1130@gmail.com · wechat: xking5898</span>
+              <strong>移动化方向</strong>
+              <span>这版开始按安卓聊天 App 的交互密度重做 UI。</span>
             </div>
           </div>
         </div>
 
         <div className="login-card">
+          <div className="login-card-brand">
+            <div className="login-card-mark" aria-hidden="true">
+              <span />
+            </div>
+            <div>
+              <strong>虾聊</strong>
+              <span>Chat workspace for Android-style UI</span>
+            </div>
+          </div>
           <div className="login-header">
             <h2>{isRegister ? '创建账号' : '账号登录'}</h2>
             <p>
               {isRegister
-                ? '先注册一个账号，再进入你的聊天工作台。'
-                : '输入账号后即可进入会话列表。'}
+                ? '创建后直接进入会话列表，联系人与资料跟账号同步。'
+                : '输入账号密码，进入你的移动聊天工作台。'}
             </p>
           </div>
 
           <form className="login-form" onSubmit={handleSubmit}>
+            <label className="field">
+              <span>服务器地址</span>
+              <input
+                type="text"
+                placeholder="例如：http://192.168.0.100:3001"
+                value={serverInput}
+                onChange={(event) => setServerInput(event.target.value)}
+                disabled={submitting}
+              />
+              <small className="field-hint">
+                {canUseRelativeApi()
+                  ? '网页部署时可留空，默认走当前站点；安卓 App 请填你的后端地址。'
+                  : '安卓 App 需要填可访问的聊天服务地址，示例：http://192.168.0.100:3001'}
+              </small>
+            </label>
+
             <label className="field">
               <span>用户名</span>
               <input
@@ -370,6 +491,7 @@ function LoginView({ onLogin }) {
 function MainView({
   user,
   socket,
+  serverBase,
   onLogout,
   onUserChange,
   themeMode,
@@ -381,6 +503,7 @@ function MainView({
 }) {
   const [contacts, setContacts] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -442,10 +565,7 @@ function MainView({
   }, [user]);
 
   useEffect(() => {
-    hydrateCurrentUser();
-    fetchContacts();
-    fetchGroups();
-    fetchOnlineUsers();
+    bootstrapApp();
   }, []);
 
   useEffect(() => {
@@ -642,6 +762,11 @@ function MainView({
 
   const selectedIsGroup = selectedConversation?.type === 'group';
   const selectedDisplayName = selectedIsGroup ? selectedConversation?.name || '' : displayName(selectedConversation);
+  const onlineCount = useMemo(() => contacts.filter((contact) => onlineUsers.has(contact.id)).length, [contacts, onlineUsers]);
+  const totalUnread = useMemo(
+    () => conversations.reduce((sum, item) => sum + Number(item.unreadCount || 0), 0),
+    [conversations]
+  );
 
   function playNotificationTone() {
     if (!soundEnabled || typeof window === 'undefined') {
@@ -697,11 +822,43 @@ function MainView({
     }
   }
 
+  async function authorizedFetch(path, options = {}) {
+    const response = await fetch(apiUrl(serverBase, path), {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...authHeaders()
+      }
+    });
+
+    if (response.status === 401) {
+      onLogout();
+      throw new Error('登录已失效，请重新登录');
+    }
+
+    return response;
+  }
+
+  async function bootstrapApp() {
+    setBootstrapping(true);
+
+    try {
+      await Promise.all([
+        hydrateCurrentUser(),
+        fetchContacts(),
+        fetchGroups(),
+        fetchOnlineUsers()
+      ]);
+    } catch (error) {
+      setNotice(error.message || '初始化失败，请刷新后重试');
+    } finally {
+      setBootstrapping(false);
+    }
+  }
+
   async function fetchOnlineUsers() {
     try {
-      const response = await fetch(apiUrl('/api/users/online'), {
-        headers: authHeaders()
-      });
+      const response = await authorizedFetch('/api/users/online');
       const data = await response.json();
       const onlineIds = new Set(data.map((entry) => entry.id));
       setOnlineUsers(onlineIds);
@@ -712,14 +869,7 @@ function MainView({
 
   async function hydrateCurrentUser() {
     try {
-      const response = await fetch(apiUrl('/api/me'), {
-        headers: authHeaders()
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
+      const response = await authorizedFetch('/api/me');
       const data = await response.json();
       if (data.user) {
         onUserChange(data.user);
@@ -730,17 +880,13 @@ function MainView({
   }
 
   async function fetchContacts() {
-    const response = await fetch(apiUrl('/api/contacts'), {
-      headers: authHeaders()
-    });
+    const response = await authorizedFetch('/api/contacts');
     const data = await response.json();
     setContacts(Array.isArray(data) ? data : []);
   }
 
   async function fetchGroups() {
-    const response = await fetch(apiUrl('/api/groups'), {
-      headers: authHeaders()
-    });
+    const response = await authorizedFetch('/api/groups');
     const data = await response.json();
     setGroups(Array.isArray(data) ? data : []);
   }
@@ -751,9 +897,7 @@ function MainView({
     setAssistantReply('');
 
     try {
-      const response = await fetch(apiUrl(`/api/groups/${groupId}/my-assistant`), {
-        headers: authHeaders()
-      });
+      const response = await authorizedFetch(`/api/groups/${groupId}/my-assistant`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || '加载群助理失败');
@@ -780,9 +924,7 @@ function MainView({
       const endpoint = conversation.type === 'group'
         ? `/api/groups/${conversation.id}/messages`
         : `/api/messages/${conversation.id}`;
-      const response = await fetch(apiUrl(endpoint), {
-        headers: authHeaders()
-      });
+      const response = await authorizedFetch(endpoint);
       const data = await response.json();
       setMessages(Array.isArray(data) ? data : []);
     } finally {
@@ -799,9 +941,7 @@ function MainView({
     setSearching(true);
 
     try {
-      const response = await fetch(apiUrl(`/api/users/search?q=${encodeURIComponent(searchQuery)}`), {
-        headers: authHeaders()
-      });
+      const response = await authorizedFetch(`/api/users/search?q=${encodeURIComponent(searchQuery)}`);
       const data = await response.json();
       setSearchResults(Array.isArray(data) ? data : []);
     } finally {
@@ -810,11 +950,10 @@ function MainView({
   }
 
   async function addContact(contactId) {
-    const response = await fetch(apiUrl('/api/contacts'), {
+    const response = await authorizedFetch('/api/contacts', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders()
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({ contactId })
     });
@@ -846,11 +985,10 @@ function MainView({
     setGroupFeedback('');
 
     try {
-      const response = await fetch(apiUrl('/api/groups'), {
+      const response = await authorizedFetch('/api/groups', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(groupForm)
       });
@@ -876,11 +1014,10 @@ function MainView({
     setProfileFeedback('');
 
     try {
-      const response = await fetch(apiUrl('/api/me'), {
+      const response = await authorizedFetch('/api/me', {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(profileForm)
       });
@@ -906,11 +1043,10 @@ function MainView({
     setProfileFeedback('');
 
     try {
-      const response = await fetch(apiUrl('/api/me/password'), {
+      const response = await authorizedFetch('/api/me/password', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(passwordForm)
       });
@@ -942,11 +1078,10 @@ function MainView({
     setAssistantFeedback('');
 
     try {
-      const response = await fetch(apiUrl(`/api/groups/${selectedConversation.id}/my-assistant`), {
+      const response = await authorizedFetch(`/api/groups/${selectedConversation.id}/my-assistant`, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(assistantForm)
       });
@@ -984,11 +1119,10 @@ function MainView({
     setAssistantFeedback('');
 
     try {
-      const response = await fetch(apiUrl(`/api/groups/${selectedConversation.id}/my-assistant/chat`), {
+      const response = await authorizedFetch(`/api/groups/${selectedConversation.id}/my-assistant/chat`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ prompt })
       });
@@ -1034,9 +1168,37 @@ function MainView({
     setMessageInput((current) => `${current}${emoji}`);
   }
 
+  if (bootstrapping) {
+    return (
+      <div className="app-shell">
+        <div className="panel empty-state">
+          <strong>正在同步服务器数据...</strong>
+          <span>联系人、群组和在线状态会从服务端恢复。</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`app-shell ${selectedConversation ? 'conversation-open' : ''}`}>
       <aside className={`left-rail ${selectedConversation ? 'mobile-hidden-when-active' : ''}`}>
+        <div className="mobile-rail-hero">
+          <div className="mobile-rail-brand">
+            <div className="mobile-rail-logo" aria-hidden="true">
+              <span />
+            </div>
+            <div>
+              <strong>虾聊</strong>
+              <span>Android Chat Workspace</span>
+            </div>
+          </div>
+          <div className="mobile-rail-summary">
+            <span>{contacts.length} 联系人</span>
+            <span>{groups.length} 群组</span>
+            <span>{onlineCount} 在线</span>
+          </div>
+        </div>
+
         <div className="rail-header panel compact-panel">
           <div className="rail-user-summary">
             <Avatar user={user} className="profile-avatar compact-avatar" />
@@ -1061,6 +1223,7 @@ function MainView({
                 <p>@{user.username}</p>
                 <div className="profile-meta">
                   <span>{user.phone ? `手机号 ${user.phone}` : '未设置手机号'}</span>
+                  {serverBase ? <span>服务器 {serverBase}</span> : null}
                 </div>
               </div>
             </div>
@@ -1320,6 +1483,10 @@ function MainView({
         </div>
 
         <div className="panel search-panel">
+          <div className="panel-title-row search-panel-title">
+            <h3>快速找人</h3>
+            <span>{searchResults.length > 0 ? `${searchResults.length} 个结果` : '输入账号或手机号'}</span>
+          </div>
           <div className="search-row">
             <input
               className="search-input"
@@ -1354,25 +1521,43 @@ function MainView({
         </div>
 
         <div className="panel contacts-panel">
+          <div className="conversation-overview">
+            <div className="conversation-stat-card active">
+              <strong>{filteredConversations.length}</strong>
+              <span>当前视图</span>
+            </div>
+            <div className="conversation-stat-card">
+              <strong>{totalUnread}</strong>
+              <span>未读消息</span>
+            </div>
+            <div className="conversation-stat-card">
+              <strong>{onlineCount}</strong>
+              <span>在线联系人</span>
+            </div>
+            <button className="conversation-stat-card action" onClick={() => setGroupCreatorOpen(true)}>
+              <strong>+</strong>
+              <span>新建群聊</span>
+            </button>
+          </div>
           <div className="conversation-layout">
             <div className="conversation-side-nav">
               <button className={`side-nav-item ${tabFilter === 'all' ? 'active' : ''}`} onClick={() => setTabFilter('all')}>
-                <span className="side-nav-text"><span>会</span><span>话</span></span>
+                <span className="side-nav-text">全部</span>
               </button>
               <button className={`side-nav-item ${tabFilter === 'direct' ? 'active' : ''}`} onClick={() => setTabFilter('direct')}>
-                <span className="side-nav-text"><span>私</span><span>聊</span></span>
+                <span className="side-nav-text">私聊</span>
               </button>
               <button className={`side-nav-item ${tabFilter === 'groups' ? 'active' : ''}`} onClick={() => setTabFilter('groups')}>
-                <span className="side-nav-text"><span>群</span><span>聊</span></span>
+                <span className="side-nav-text">群聊</span>
               </button>
               <button className={`side-nav-item ${tabFilter === 'online' ? 'active' : ''}`} onClick={() => setTabFilter('online')}>
-                <span className="side-nav-text"><span>在</span><span>线</span></span>
+                <span className="side-nav-text">在线</span>
               </button>
               <button className={`side-nav-item ${tabFilter === 'unread' ? 'active' : ''}`} onClick={() => setTabFilter('unread')}>
-                <span className="side-nav-text"><span>未</span><span>读</span></span>
+                <span className="side-nav-text">未读</span>
               </button>
               <button className="side-nav-item accent" onClick={() => setGroupCreatorOpen(true)}>
-                <span className="side-nav-text"><span>建</span><span>群</span></span>
+                <span className="side-nav-text">建群</span>
               </button>
             </div>
 
@@ -1380,7 +1565,7 @@ function MainView({
               <div className="panel-title-row">
                 <h3>{tabFilter === 'groups' ? '群聊列表' : tabFilter === 'direct' ? '联系人会话' : '最近会话'}</h3>
                 <div className="panel-inline-actions">
-                  <span>{filteredConversations.length}</span>
+                  <span>{filteredConversations.length} 条</span>
                 </div>
               </div>
 

@@ -8,7 +8,11 @@
   "scripts": {
     "desktop:prepare": "npm.cmd install --prefix backend && npm.cmd install --prefix frontend && npm.cmd run build --prefix frontend",
     "desktop:dev": "npm run desktop:prepare && electron .",
-    "desktop:build": "npm run desktop:prepare && electron-builder --win nsis"
+    "desktop:build": "npm run desktop:prepare && electron-builder --win nsis",
+    "android:build:web": "npm run build --prefix frontend",
+    "android:sync": "npm run android:build:web && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:build:debug": "npm run android:sync && cd android && ./gradlew assembleDebug"
   },
   "devDependencies": {
     "electron": "^35.1.5",
@@ -37,5 +41,10 @@
         "nsis"
       ]
     }
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0"
   }
 }

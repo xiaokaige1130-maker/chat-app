@@ -75,6 +75,7 @@
 html,
 body,
 #root {
+  height: 100%;
   min-height: 100%;
 }
 
@@ -82,6 +83,7 @@ body {
   margin: 0;
   color: var(--text-primary);
   background: var(--bg-app-accent);
+  overflow: hidden;
 }
 
 button,
@@ -109,6 +111,7 @@ select {
 .login-shell,
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .login-shell {
@@ -146,6 +149,122 @@ select {
   flex-direction: column;
   justify-content: space-between;
   padding: 38px;
+}
+
+.login-brand-lockup,
+.login-card-brand,
+.mobile-rail-brand {
+  display: flex;
+  align-items: center;
+}
+
+.login-brand-lockup,
+.mobile-rail-brand {
+  gap: 18px;
+}
+
+.login-card-brand {
+  gap: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.login-brand-copy,
+.login-card-brand div,
+.mobile-rail-brand div {
+  display: grid;
+  gap: 6px;
+}
+
+.login-mark,
+.login-card-mark,
+.mobile-rail-logo {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 34%),
+    linear-gradient(145deg, #0f7cf7 0%, #2152d8 56%, #0ca678 100%);
+  box-shadow: 0 18px 34px rgba(28, 76, 180, 0.28);
+}
+
+.login-mark {
+  width: 84px;
+  height: 84px;
+  border-radius: 28px;
+}
+
+.login-card-mark,
+.mobile-rail-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+}
+
+.login-mark span,
+.login-card-mark span,
+.mobile-rail-logo span {
+  position: absolute;
+  inset: 0;
+}
+
+.login-mark span:nth-child(1) {
+  background: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.3) 100%);
+}
+
+.login-mark span:nth-child(2) {
+  inset: 18px auto 18px 18px;
+  width: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.login-mark span:nth-child(3),
+.login-card-mark span,
+.mobile-rail-logo span {
+  inset: auto 12px 12px auto;
+  width: 26px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    -18px -14px 0 -1px rgba(255, 255, 255, 0.8),
+    -4px -28px 0 -2px rgba(255, 255, 255, 0.54);
+}
+
+.login-stats,
+.mobile-rail-summary,
+.conversation-overview {
+  display: grid;
+  gap: 12px;
+}
+
+.login-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.login-stats div,
+.conversation-stat-card {
+  border-radius: 20px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-panel-muted);
+}
+
+.login-stats div {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+}
+
+.login-stats strong,
+.conversation-stat-card strong {
+  font-size: 18px;
+  letter-spacing: 0.06em;
+}
+
+.login-card-brand span {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .login-copy h1,
@@ -219,6 +338,13 @@ select {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.field-hint {
+  margin-top: -2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
 }
 
 .field-switch {
@@ -379,6 +505,8 @@ select {
   gap: 14px;
   padding: 14px;
   height: 100vh;
+  height: 100dvh;
+  background: var(--bg-app);
   overflow: hidden;
 }
 
@@ -510,9 +638,17 @@ select {
   padding: 16px;
 }
 
+.search-panel,
+.contacts-panel {
+  min-height: 0;
+}
+
 .contacts-panel {
   padding: 4px 6px;
   min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panel-title-row,
@@ -535,7 +671,12 @@ select {
   gap: 10px;
 }
 
+.search-panel-title {
+  margin-bottom: 2px;
+}
+
 .conversation-layout {
+  height: 100%;
   min-height: 0;
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
@@ -550,13 +691,13 @@ select {
 }
 
 .side-nav-item {
-  width: 32px;
+  width: 48px;
   min-height: 54px;
-  padding: 6px 4px;
-  border-radius: 12px;
+  padding: 6px 8px;
+  border-radius: 14px;
   background: var(--bg-ghost);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-align: center;
   border: 1px solid var(--border-soft);
@@ -580,6 +721,7 @@ select {
   align-items: center;
   gap: 1px;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .conversation-main {
@@ -587,6 +729,7 @@ select {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
+  overflow: hidden;
 }
 
 .result-list,
@@ -594,6 +737,7 @@ select {
   display: grid;
   gap: 10px;
   overflow: auto;
+  min-height: 0;
 }
 
 .result-list {
@@ -625,10 +769,10 @@ select {
 }
 
 .compact-contact-card {
-  padding: 10px;
+  padding: 10px 12px;
   gap: 10px;
-  border-radius: 14px;
-  background: transparent;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 84%, transparent);
 }
 
 .compact-contact-card .avatar,
@@ -652,6 +796,7 @@ select {
 .contact-card.active {
   background: var(--bg-accent-soft);
   border-color: var(--border-accent);
+  box-shadow: inset 0 0 0 1px rgba(57, 105, 235, 0.08);
 }
 
 .conversation-filter-row .search-input,
@@ -761,6 +906,8 @@ select {
 
 .chat-topbar {
   border-bottom: 1px solid var(--border-soft);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel-strong) 96%, transparent), color-mix(in srgb, var(--bg-panel) 92%, transparent));
 }
 
 .chat-topbar-actions {
@@ -784,6 +931,7 @@ select {
 
 .message-stage {
   overflow: auto;
+  min-height: 0;
   padding: 20px 18px;
   display: grid;
   align-content: start;
@@ -900,6 +1048,39 @@ select {
   min-width: 88px;
 }
 
+.mobile-rail-hero {
+  display: none;
+}
+
+.conversation-overview {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 10px;
+}
+
+.conversation-stat-card {
+  min-height: 78px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 14px 16px;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.conversation-stat-card span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.conversation-stat-card.active {
+  background: var(--bg-accent-soft);
+  border-color: var(--border-accent);
+}
+
+.conversation-stat-card.action {
+  background: linear-gradient(135deg, rgba(25, 131, 235, 0.12), rgba(13, 166, 120, 0.12));
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -1009,19 +1190,53 @@ select {
     padding: 0;
   }
 
+  .login-shell {
+    align-items: stretch;
+    background:
+      radial-gradient(circle at top, rgba(61, 119, 255, 0.24), transparent 34%),
+      linear-gradient(180deg, #08101b 0%, #0d1624 40%, #111d2d 100%);
+  }
+
+  .login-panel {
+    min-height: 100vh;
+    min-height: 100dvh;
+    gap: 0;
+  }
+
+  .login-card {
+    align-self: end;
+    margin-top: auto;
+    padding: 22px 18px 28px;
+    border-radius: 28px 28px 0 0;
+    background: color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
+  }
+
+  .login-card-brand {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
   .app-shell {
+    position: fixed;
+    inset: 0;
     grid-template-columns: 1fr;
     gap: 0;
-    background: var(--bg-app-accent);
+    height: 100vh;
+    height: 100dvh;
+    background: var(--bg-app);
+    z-index: 20;
   }
 
   .left-rail,
   .chat-stage {
     min-height: 100vh;
+    min-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
     border-radius: 0;
     border: 0;
     box-shadow: none;
-    background: var(--bg-panel-strong);
+    backdrop-filter: none;
+    background: var(--bg-app);
   }
 
   .mobile-hidden-when-active {
@@ -1033,25 +1248,34 @@ select {
   }
 
   .left-rail {
-    padding: 12px;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
   }
 
   .conversation-layout {
     grid-template-columns: 1fr;
-    gap: 10px;
+    gap: 12px;
   }
 
   .conversation-side-nav {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     grid-auto-flow: column;
-    grid-auto-columns: minmax(62px, 1fr);
+    grid-auto-columns: max-content;
+    gap: 8px;
     overflow: auto;
+    padding: 2px 0 6px;
+    background: var(--bg-app);
   }
 
   .side-nav-item {
     width: auto;
-    min-height: 48px;
-    padding: 8px 10px;
-    font-size: 11px;
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 999px;
+    font-size: 12px;
   }
 
   .side-nav-text {
@@ -1069,26 +1293,32 @@ select {
 
   .profile-popover-card {
     max-height: calc(100vh - 20px);
+    background: var(--bg-panel-strong);
   }
 
   .chat-topbar {
     position: sticky;
     top: 0;
     z-index: 3;
-    background: var(--bg-panel-strong);
-    padding: 12px 14px;
-    gap: 12px;
+    padding: 10px 12px;
+    gap: 10px;
+    background: var(--bg-app);
+    border-bottom: 1px solid var(--border-soft);
   }
 
   .mobile-back-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    min-width: 52px;
+    height: 38px;
+    border-radius: 14px;
   }
 
   .chat-user {
     align-items: flex-start;
     width: 100%;
+    gap: 10px;
   }
 
   .chat-user > div:last-child {
@@ -1101,19 +1331,19 @@ select {
   }
 
   .message-stage {
-    padding: 14px 12px;
+    padding: 12px 10px;
   }
 
   .message-bubble {
-    max-width: 88%;
+    max-width: 90%;
   }
 
   .composer {
     position: sticky;
     bottom: 0;
-    background: color-mix(in srgb, var(--bg-panel-strong) 92%, transparent);
-    backdrop-filter: blur(16px);
-    padding: 12px;
+    background: var(--bg-app);
+    backdrop-filter: none;
+    padding: 10px;
   }
 
   .quick-emoji-row {
@@ -1135,31 +1365,163 @@ select {
 
   .send-button {
     width: 100%;
+    min-height: 46px;
+    border-radius: 16px;
   }
 
   .notice-banner {
     margin: 10px 12px 0;
   }
+
+  .mobile-rail-hero {
+    display: grid;
+    gap: 12px;
+    padding: 18px 14px 14px;
+    background: linear-gradient(180deg, #1d6ef2 0%, #165bc9 100%);
+    color: #fff;
+  }
+
+  .mobile-rail-brand strong {
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  .mobile-rail-brand span,
+  .mobile-rail-summary span {
+    color: rgba(255, 255, 255, 0.74);
+  }
+
+  .mobile-rail-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .mobile-rail-summary span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .rail-header.compact-panel,
+  .search-panel,
+  .contacts-panel {
+    margin: 0;
+  }
+
+  .rail-header.compact-panel {
+    padding: 14px 16px;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    border-top: 0;
+    background: var(--bg-panel-strong);
+    box-shadow: none;
+  }
+
+  .search-panel {
+    padding: 12px 16px;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    background: var(--bg-panel-strong);
+    box-shadow: none;
+  }
+
+  .contacts-panel {
+    padding: 12px 16px 16px;
+    border-radius: 0;
+    border: 0;
+    min-height: 0;
+    background: var(--bg-app);
+    box-shadow: none;
+  }
+
+  .conversation-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .conversation-stat-card {
+    min-height: 58px;
+    padding: 10px 12px;
+    border-radius: 16px;
+    text-align: left;
+    background: var(--bg-panel-strong);
+  }
+
+  .conversation-stat-card strong {
+    font-size: 18px;
+    letter-spacing: 0;
+  }
+
+  .conversation-stat-card span {
+    font-size: 11px;
+  }
+
+  .panel-title-row h3 {
+    font-size: 15px;
+  }
+
+  .compact-contact-list {
+    gap: 10px;
+  }
+
+  .compact-contact-card {
+    padding: 14px 12px;
+    border-radius: 16px;
+    background: var(--bg-panel-strong);
+    box-shadow: none;
+  }
+
+  .compact-contact-card .contact-topline strong {
+    font-size: 14px;
+  }
+
+  .compact-contact-card .contact-meta span,
+  .compact-contact-card .status-text {
+    font-size: 12px;
+  }
+
+  .contact-time,
+  .status-text,
+  .message-time,
+  .message-read-state {
+    font-size: 11px;
+  }
+
+  .composer-box {
+    gap: 8px;
+  }
+
+  .composer-box textarea {
+    min-height: 52px;
+    padding: 12px 14px;
+    border-radius: 18px;
+  }
 }
 
 @media (max-width: 520px) {
   .rail-header.compact-panel {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
   }
 
   .rail-menu-button {
-    width: 100%;
-  }
-
-  .compact-contact-card {
-    padding: 10px 8px;
+    width: auto;
   }
 
   .compact-contact-card .contact-topline,
   .compact-contact-card .contact-bottomline {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
   }
 
   .chat-avatar,
@@ -1182,5 +1544,9 @@ select {
 
   .empty-state.large {
     padding: 32px 20px;
+  }
+
+  .chat-topbar-actions {
+    gap: 6px;
   }
 }

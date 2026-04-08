@@ -121,11 +121,12 @@ pm2 startup
 - `HOST`: 默认 `0.0.0.0`
 - `JWT_SECRET`: JWT 密钥
 - `DATA_PATH`: 本地 JSON 数据文件路径，默认 `backend/data.json`
+- `DB_PATH`: SQLite 数据库文件路径，默认 `backend/chat.db`
 
 示例：
 
 ```bash
-JWT_SECRET='replace-this' PORT=3001 HOST=127.0.0.1 DATA_PATH=/var/lib/chat-app/data.json ./start.sh
+JWT_SECRET='replace-this' PORT=3001 HOST=127.0.0.1 DATA_PATH=/var/lib/chat-app/data.json DB_PATH=/var/lib/chat-app/chat.db ./start.sh
 ```
 
 ## 访问方式

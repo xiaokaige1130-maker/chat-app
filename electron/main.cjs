@@ -40,7 +40,8 @@ function startBackend() {
       HOST: '127.0.0.1',
       PORT: '3001',
       JWT_SECRET: process.env.JWT_SECRET || 'desktop-chat-app-secret',
-      DATA_PATH: path.join(app.getPath('userData'), 'data.json')
+      DATA_PATH: path.join(app.getPath('userData'), 'data.json'),
+      DB_PATH: path.join(app.getPath('userData'), 'chat.db')
     },
     stdio: 'ignore',
     windowsHide: true
