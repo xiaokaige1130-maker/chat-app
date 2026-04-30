@@ -504,6 +504,7 @@ function MainView({
   const [contacts, setContacts] = useState([]);
   const [groups, setGroups] = useState([]);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -513,11 +514,14 @@ function MainView({
   const [tabFilter, setTabFilter] = useState('all');
   const [messageSearch, setMessageSearch] = useState('');
   const [messageInput, setMessageInput] = useState('');
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [searching, setSearching] = useState(false);
   const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
+  const [settingsView, setSettingsView] = useState('main');
   const [groupCreatorOpen, setGroupCreatorOpen] = useState(false);
+  const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const [groupSubmitting, setGroupSubmitting] = useState(false);
   const [groupFeedback, setGroupFeedback] = useState('');
   const [groupForm, setGroupForm] = useState({
@@ -555,6 +559,9 @@ function MainView({
   const messageEndRef = useRef(null);
   const shouldScrollToBottomRef = useRef(false);
   const audioContextRef = useRef(null);
+  const selectedConversationRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   useEffect(() => {
     setProfileForm({
@@ -569,23 +576,57 @@ function MainView({
   }, []);
 
   useEffect(() => {
+    selectedConversationRef.current = selectedConversation;
+    setConversationMenuOpen(false);
+  }, [selectedConversation]);
+
+  useEffect(() => {
     if (!selectedConversation) {
       return;
     }
 
-    if (selectedConversation.type === 'direct') {
-      const nextSelected = contacts.find((entry) => entry.id === selectedConversation.id);
-      if (nextSelected) {
-        setSelectedConversation({ ...nextSelected, type: 'direct' });
-      }
+    const nextSelected = selectedConversation.type === 'direct'
+      ? contacts.find((entry) => entry.id === selectedConversation.id)
+      : groups.find((entry) => entry.id === selectedConversation.id);
+
+    if (!nextSelected) {
       return;
     }
 
-    const nextGroup = groups.find((entry) => entry.id === selectedConversation.id);
-    if (nextGroup) {
-      setSelectedConversation({ ...nextGroup, type: 'group' });
+    setSelectedConversation((current) => {
+      if (!current || current.id !== selectedConversation.id || current.type !== selectedConversation.type) {
+        return current;
+      }
+
+      return { ...nextSelected, type: current.type };
+    });
+  }, [contacts, groups, selectedConversation?.id, selectedConversation?.type]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (selectedConversationRef.current) {
+        setSelectedConversation(null);
+        setMessageSearch('');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedConversation || typeof window === 'undefined') {
+      return;
     }
-  }, [contacts, groups, selectedConversation]);
+
+    if (!window.history.state?.chatConversationOpen) {
+      window.history.pushState(
+        { ...(window.history.state || {}), chatConversationOpen: true },
+        '',
+        window.location.href
+      );
+    }
+  }, [selectedConversation?.id, selectedConversation?.type]);
 
   useEffect(() => {
     if (!socket) {
@@ -617,6 +658,16 @@ function MainView({
       }
     };
 
+    const handleMessageRecalled = (message) => {
+      setMessages((current) => current.map((entry) => entry.id === message.id ? message : entry));
+      fetchContacts();
+    };
+
+    const handleGroupMessageRecalled = (message) => {
+      setMessages((current) => current.map((entry) => entry.id === message.id ? message : entry));
+      fetchGroups();
+    };
+
     const handleUserStatus = (payload) => {
       if (payload.online) {
         setOnlineUsers((prev) => new Set(prev).add(payload.userId));
@@ -639,18 +690,37 @@ function MainView({
       setNotice('你已加入一个新的群聊。');
     };
 
+    const handleFriendRequestReceived = () => {
+      fetchFriendRequests();
+      setNotice('收到一条新的好友申请。');
+    };
+
+    const handleFriendRequestUpdated = (payload) => {
+      fetchFriendRequests();
+      fetchContacts();
+      setNotice(payload.status === 'accepted' ? `${displayName(payload.user)} 已通过你的好友申请。` : '你的好友申请被拒绝。');
+    };
+
     socket.on('message', handleIncomingMessage);
     socket.on('group-message', handleIncomingGroupMessage);
+    socket.on('message-recalled', handleMessageRecalled);
+    socket.on('group-message-recalled', handleGroupMessageRecalled);
     socket.on('user-status', handleUserStatus);
     socket.on('contact_added', handleContactAdded);
     socket.on('group_created', handleGroupCreated);
+    socket.on('friend_request_received', handleFriendRequestReceived);
+    socket.on('friend_request_updated', handleFriendRequestUpdated);
 
     return () => {
       socket.off('message', handleIncomingMessage);
       socket.off('group-message', handleIncomingGroupMessage);
+      socket.off('message-recalled', handleMessageRecalled);
+      socket.off('group-message-recalled', handleGroupMessageRecalled);
       socket.off('user-status', handleUserStatus);
       socket.off('contact_added', handleContactAdded);
       socket.off('group_created', handleGroupCreated);
+      socket.off('friend_request_received', handleFriendRequestReceived);
+      socket.off('friend_request_updated', handleFriendRequestUpdated);
     };
   }, [socket, selectedConversation, user.id, soundEnabled, notificationsEnabled, isWindowFocused]);
 
@@ -715,7 +785,9 @@ function MainView({
       subline: `@${contact.username}${contact.phone ? ` · ${contact.phone}` : ''}`,
       summary: contact.lastMessage || (onlineUsers.has(contact.id) ? '在线' : contact.lastSeen ? `上次在线 ${formatMessageTime(contact.lastSeen)}` : '离线'),
       sortableAt: contact.lastMessageAt || contact.created_at || '',
-      unreadCount: contact.unreadCount || 0
+      unreadCount: contact.unreadCount || 0,
+      pinned: Boolean(contact.pinned),
+      hidden: Boolean(contact.hidden)
     }));
 
     const groupItems = groups.map((group) => ({
@@ -725,17 +797,22 @@ function MainView({
       subline: `${group.memberCount} 位成员 · 群聊`,
       summary: group.lastMessage || '群里还没有消息',
       sortableAt: group.lastMessageAt || group.created_at || '',
-      unreadCount: 0
+      unreadCount: 0,
+      pinned: Boolean(group.pinned),
+      hidden: Boolean(group.hidden)
     }));
 
     return [...directItems, ...groupItems].sort((left, right) => {
+      if (left.pinned !== right.pinned) {
+        return left.pinned ? -1 : 1;
+      }
       return String(right.sortableAt || '').localeCompare(String(left.sortableAt || ''));
     });
   }, [contacts, groups, onlineUsers]);
 
   const filteredConversations = useMemo(() => {
     const query = conversationFilter.trim().toLowerCase();
-    let nextItems = conversations;
+    let nextItems = conversations.filter((item) => !item.hidden);
 
     if (tabFilter === 'online') {
       nextItems = nextItems.filter((item) => item.type === 'direct' && onlineUsers.has(item.id));
@@ -767,6 +844,7 @@ function MainView({
     () => conversations.reduce((sum, item) => sum + Number(item.unreadCount || 0), 0),
     [conversations]
   );
+  const pendingIncomingCount = friendRequests.incoming.filter((request) => request.status === 'pending').length;
 
   function playNotificationTone() {
     if (!soundEnabled || typeof window === 'undefined') {
@@ -847,6 +925,7 @@ function MainView({
         hydrateCurrentUser(),
         fetchContacts(),
         fetchGroups(),
+        fetchFriendRequests(),
         fetchOnlineUsers()
       ]);
     } catch (error) {
@@ -889,6 +968,19 @@ function MainView({
     const response = await authorizedFetch('/api/groups');
     const data = await response.json();
     setGroups(Array.isArray(data) ? data : []);
+  }
+
+  async function fetchFriendRequests() {
+    try {
+      const response = await authorizedFetch('/api/friend-requests');
+      const data = await response.json();
+      setFriendRequests({
+        incoming: Array.isArray(data.incoming) ? data.incoming : [],
+        outgoing: Array.isArray(data.outgoing) ? data.outgoing : []
+      });
+    } catch {
+      // Ignore request list failures.
+    }
   }
 
   async function fetchAssistantSettings(groupId) {
@@ -949,25 +1041,98 @@ function MainView({
     }
   }
 
-  async function addContact(contactId) {
-    const response = await authorizedFetch('/api/contacts', {
+  async function sendFriendRequest(receiverId) {
+    const response = await authorizedFetch('/api/friend-requests', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ contactId })
+      body: JSON.stringify({ receiverId, message: `${displayName(user)} 想添加你为好友` })
     });
 
     const data = await response.json();
     if (!response.ok) {
-      setProfileFeedback(data.error || '添加联系人失败');
+      setProfileFeedback(data.error || '发送好友申请失败');
       return;
     }
 
     setSearchQuery('');
     setSearchResults([]);
-    setProfileFeedback('');
+    setProfileFeedback('好友申请已发送');
+    await fetchFriendRequests();
+  }
+
+  async function respondFriendRequest(requestId, action) {
+    const response = await authorizedFetch(`/api/friend-requests/${requestId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ action })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      setNotice(data.error || '处理好友申请失败');
+      return;
+    }
+
+    await fetchFriendRequests();
     await fetchContacts();
+    setNotice(action === 'accept' ? '已添加为联系人。' : '已拒绝好友申请。');
+  }
+
+  async function updateSelectedConversationPreference(nextPreference) {
+    if (!selectedConversation) {
+      return;
+    }
+
+    const response = await authorizedFetch(`/api/conversations/${selectedConversation.type}/${selectedConversation.id}/preferences`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        pinned: nextPreference.pinned ?? selectedConversation.pinned,
+        hidden: nextPreference.hidden ?? selectedConversation.hidden
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      setNotice(data.error || '更新会话设置失败');
+      return;
+    }
+
+    setSelectedConversation((current) => current ? { ...current, ...data.preference } : current);
+    await fetchContacts();
+    await fetchGroups();
+  }
+
+  async function removeSelectedContact() {
+    if (!selectedConversation || selectedConversation.type !== 'direct') {
+      return;
+    }
+
+    const confirmed = window.confirm(`确定删除 ${selectedDisplayName || '这个联系人'} 吗？聊天记录会保留在数据库中。`);
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await authorizedFetch(`/api/contacts/${selectedConversation.id}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      setNotice(data.error || '删除联系人失败');
+      return;
+    }
+
+    setSelectedConversation(null);
+    setMessages([]);
+    await fetchContacts();
+    setNotice('联系人已删除。');
   }
 
   async function createGroup() {
@@ -1161,11 +1326,96 @@ function MainView({
     }
 
     setMessageInput('');
+    setEmojiPickerOpen(false);
     setTimeout(() => setSending(false), 200);
   }
 
   function insertQuickEmoji(emoji) {
     setMessageInput((current) => `${current}${emoji}`);
+  }
+
+  function handleMediaSelected(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    setNotice('图片/文件入口已准备好，下一步接上传接口后就能发送。');
+  }
+
+  function isMessageDeleted(message) {
+    return Boolean(message?.deleted_at || message?.deletedAt);
+  }
+
+  async function recallMessage(message) {
+    if (!message || isMessageDeleted(message)) {
+      return;
+    }
+
+    const endpoint = selectedIsGroup ? `/api/messages/group/${message.id}` : `/api/messages/direct/${message.id}`;
+    const response = await authorizedFetch(endpoint, {
+      method: 'DELETE',
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setNotice(data.error || '撤回失败');
+      return;
+    }
+
+    if (data.message) {
+      setMessages((current) => current.map((entry) => entry.id === data.message.id ? data.message : entry));
+    }
+  }
+
+  async function clearSelectedConversationMessages() {
+    if (!selectedConversation) {
+      return;
+    }
+
+    const confirmed = window.confirm('清空后只会清掉你这边当前会话的显示记录，不会影响其他成员。继续吗？');
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await authorizedFetch(`/api/conversations/${selectedConversation.type}/${selectedConversation.id}/clear`, {
+      method: 'POST',
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setNotice(data.error || '清空聊天记录失败');
+      return;
+    }
+
+    setMessages([]);
+    setConversationMenuOpen(false);
+    selectedConversation.type === 'group' ? fetchGroups() : fetchContacts();
+    setNotice('已清空你这边的聊天记录。');
+  }
+
+  function switchMobileTab(nextTab) {
+    if (nextTab === 'profile') {
+      setProfileDrawerOpen(true);
+      setSettingsView('main');
+      return;
+    }
+
+    setSelectedConversation(null);
+    setTabFilter(nextTab);
+  }
+
+  function closeConversation() {
+    if (typeof window !== 'undefined' && window.history.state?.chatConversationOpen) {
+      window.history.back();
+      return;
+    }
+
+    setSelectedConversation(null);
+    setMessageSearch('');
+    setConversationMenuOpen(false);
   }
 
   if (bootstrapping) {
@@ -1207,148 +1457,191 @@ function MainView({
               <p>@{user.username}</p>
             </div>
           </div>
-          <button className="rail-menu-button" onClick={() => setProfileDrawerOpen((value) => !value)}>
-            个人中心
+          <button className="rail-menu-button" onClick={() => {
+            setSettingsView('main');
+            setProfileDrawerOpen((value) => !value);
+          }}>
+            我
           </button>
         </div>
 
         <div className={`profile-popover-shell ${profileDrawerOpen ? 'open' : ''}`}>
-          <button className="profile-popover-backdrop" onClick={() => setProfileDrawerOpen(false)} aria-label="关闭个人中心" />
-          <div className="profile-card profile-popover-card">
-            <div className="profile-top">
-              <Avatar user={user} className="profile-avatar" />
-              <div className="profile-summary">
-                <div className="badge subtle">在线</div>
-                <h2>{displayName(user)}</h2>
-                <p>@{user.username}</p>
-                <div className="profile-meta">
-                  <span>{user.phone ? `手机号 ${user.phone}` : '未设置手机号'}</span>
-                  {serverBase ? <span>服务器 {serverBase}</span> : null}
+          <button className="profile-popover-backdrop" onClick={() => {
+            setSettingsView('main');
+            setProfileDrawerOpen(false);
+          }} aria-label="关闭个人中心" />
+          <div className="profile-card profile-popover-card settings-drawer">
+            <div className="settings-header">
+              <button
+                className="settings-close-button"
+                onClick={() => {
+                  if (settingsView !== 'main') {
+                    setSettingsView('main');
+                    return;
+                  }
+                  setSettingsView('main');
+                  setProfileDrawerOpen(false);
+                }}
+                aria-label={settingsView === 'main' ? '关闭个人中心' : '返回'}
+              >
+                &lt;
+              </button>
+              <h3>{settingsView === 'profile' ? '编辑资料' : settingsView === 'security' ? '账号安全' : '我的'}</h3>
+            </div>
+
+            {settingsView === 'main' ? (
+              <>
+                <div className="settings-body settings-body-main">
+                  <section className="settings-profile-card">
+                    <Avatar user={user} className="profile-avatar" />
+                    <div className="profile-summary">
+                      <h2>{displayName(user)}</h2>
+                      <p>@{user.username}</p>
+                      <div className="profile-meta">
+                        <span>{user.phone ? user.phone : '未设置手机号'}</span>
+                        {serverBase ? <span>服务器 {serverBase}</span> : null}
+                      </div>
+                    </div>
+                    <button className="settings-edit-button" onClick={() => setSettingsView('profile')}>
+                      编辑
+                    </button>
+                  </section>
+
+                  <section className="settings-section">
+                    <div className="settings-section-title">偏好</div>
+                    <label className="settings-row">
+                      <span>外观主题</span>
+                      <select
+                        className="settings-control"
+                        value={themeMode}
+                        onChange={(event) => onThemeModeChange(event.target.value)}
+                      >
+                        <option value="system">跟随系统</option>
+                        <option value="light">浅色</option>
+                        <option value="dark">深色</option>
+                      </select>
+                    </label>
+                    <div className="settings-row">
+                      <span>新消息提示音</span>
+                      <button
+                        type="button"
+                        className={`settings-switch ${soundEnabled ? 'active' : ''}`}
+                        onClick={() => onSoundEnabledChange(!soundEnabled)}
+                      >
+                        {soundEnabled ? '开' : '关'}
+                      </button>
+                    </div>
+                    <div className="settings-row">
+                      <span>系统通知</span>
+                      <button
+                        type="button"
+                        className={`settings-switch ${notificationsEnabled ? 'active' : ''}`}
+                        onClick={() => onNotificationsEnabledChange(!notificationsEnabled)}
+                      >
+                        {notificationsEnabled ? '开' : '关'}
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="settings-section">
+                    <button className="settings-nav-row" onClick={() => setSettingsView('profile')}>
+                      <span>编辑资料</span>
+                      <span>&gt;</span>
+                    </button>
+                    <button className="settings-nav-row" onClick={() => setSettingsView('security')}>
+                      <span>账号安全</span>
+                      <span>&gt;</span>
+                    </button>
+                  </section>
+
+                  {profileFeedback ? <div className="inline-feedback settings-feedback">{profileFeedback}</div> : null}
                 </div>
-              </div>
-            </div>
 
-            <div className="profile-editor">
-              <div className="panel-title-row">
-                <h3>个人资料</h3>
-                <button className="text-button" onClick={() => setProfileDrawerOpen(false)}>关闭</button>
-              </div>
-
-              <div className="profile-grid">
-                <label className="field">
-                  <span>外观主题</span>
-                  <select
-                    className="search-input"
-                    value={themeMode}
-                    onChange={(event) => onThemeModeChange(event.target.value)}
-                  >
-                    <option value="system">跟随系统</option>
-                    <option value="light">浅色</option>
-                    <option value="dark">深色</option>
-                  </select>
-                </label>
-
-                <label className="field field-switch">
-                  <span>新消息提示音</span>
-                  <button
-                    type="button"
-                    className={`toggle-button ${soundEnabled ? 'active' : ''}`}
-                    onClick={() => onSoundEnabledChange(!soundEnabled)}
-                  >
-                    {soundEnabled ? '已开启' : '已关闭'}
+                <div className="settings-footer">
+                  <button className="settings-logout-button" onClick={onLogout}>退出登录</button>
+                </div>
+              </>
+            ) : settingsView === 'profile' ? (
+              <div className="settings-body settings-body-page">
+                <section className="settings-section">
+                  <div className="settings-section-title">个人资料</div>
+                  <label className="settings-field">
+                    <span>昵称</span>
+                    <input
+                      type="text"
+                      placeholder="例如：小凯"
+                      value={profileForm.nickname}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, nickname: event.target.value }))}
+                      disabled={profileSaving}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>头像地址</span>
+                    <input
+                      type="text"
+                      placeholder="https://example.com/avatar.jpg"
+                      value={profileForm.avatarUrl}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, avatarUrl: event.target.value }))}
+                      disabled={profileSaving}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>手机号</span>
+                    <input
+                      type="text"
+                      placeholder="请输入手机号"
+                      value={profileForm.phone}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))}
+                      disabled={profileSaving}
+                    />
+                  </label>
+                  <button className="settings-primary-action" onClick={saveProfile} disabled={profileSaving}>
+                    {profileSaving ? '保存中...' : '保存资料'}
                   </button>
-                </label>
-
-                <label className="field field-switch">
-                  <span>系统通知</span>
-                  <button
-                    type="button"
-                    className={`toggle-button ${notificationsEnabled ? 'active' : ''}`}
-                    onClick={() => onNotificationsEnabledChange(!notificationsEnabled)}
-                  >
-                    {notificationsEnabled ? '已开启' : '已关闭'}
+                </section>
+                {profileFeedback ? <div className="inline-feedback settings-feedback">{profileFeedback}</div> : null}
+              </div>
+            ) : (
+              <div className="settings-body settings-body-page">
+                <section className="settings-section">
+                  <div className="settings-section-title">账号安全</div>
+                  <label className="settings-field">
+                    <span>当前密码</span>
+                    <input
+                      type="password"
+                      placeholder="请输入当前密码"
+                      value={passwordForm.currentPassword}
+                      onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
+                      disabled={passwordSaving}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>新密码</span>
+                    <input
+                      type="password"
+                      placeholder="至少 6 位"
+                      value={passwordForm.nextPassword}
+                      onChange={(event) => setPasswordForm((current) => ({ ...current, nextPassword: event.target.value }))}
+                      disabled={passwordSaving}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>确认新密码</span>
+                    <input
+                      type="password"
+                      placeholder="再次输入新密码"
+                      value={passwordForm.confirmPassword}
+                      onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                      disabled={passwordSaving}
+                    />
+                  </label>
+                  <button className="settings-secondary-action" onClick={savePassword} disabled={passwordSaving}>
+                    {passwordSaving ? '修改中...' : '修改密码'}
                   </button>
-                </label>
-
-                <label className="field">
-                  <span>昵称</span>
-                  <input
-                    type="text"
-                    placeholder="例如：小凯"
-                    value={profileForm.nickname}
-                    onChange={(event) => setProfileForm((current) => ({ ...current, nickname: event.target.value }))}
-                    disabled={profileSaving}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>头像地址</span>
-                  <input
-                    type="text"
-                    placeholder="https://example.com/avatar.jpg"
-                    value={profileForm.avatarUrl}
-                    onChange={(event) => setProfileForm((current) => ({ ...current, avatarUrl: event.target.value }))}
-                    disabled={profileSaving}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>手机号</span>
-                  <input
-                    type="text"
-                    placeholder="请输入手机号"
-                    value={profileForm.phone}
-                    onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))}
-                    disabled={profileSaving}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>当前密码</span>
-                  <input
-                    type="password"
-                    placeholder="请输入当前密码"
-                    value={passwordForm.currentPassword}
-                    onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
-                    disabled={passwordSaving}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>新密码</span>
-                  <input
-                    type="password"
-                    placeholder="至少 6 位"
-                    value={passwordForm.nextPassword}
-                    onChange={(event) => setPasswordForm((current) => ({ ...current, nextPassword: event.target.value }))}
-                    disabled={passwordSaving}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>确认新密码</span>
-                  <input
-                    type="password"
-                    placeholder="再次输入新密码"
-                    value={passwordForm.confirmPassword}
-                    onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
-                    disabled={passwordSaving}
-                  />
-                </label>
+                </section>
+                {profileFeedback ? <div className="inline-feedback settings-feedback">{profileFeedback}</div> : null}
               </div>
-
-              {profileFeedback ? <div className="inline-feedback">{profileFeedback}</div> : null}
-
-              <div className="profile-actions">
-                <button className="primary-button" onClick={saveProfile} disabled={profileSaving}>
-                  {profileSaving ? '保存中...' : '保存资料'}
-                </button>
-                <button className="secondary-button" onClick={savePassword} disabled={passwordSaving}>
-                  {passwordSaving ? '修改中...' : '修改密码'}
-                </button>
-                <button className="danger-button" onClick={onLogout}>退出登录</button>
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
@@ -1483,9 +1776,11 @@ function MainView({
         </div>
 
         <div className="panel search-panel">
-          <div className="panel-title-row search-panel-title">
-            <h3>快速找人</h3>
-            <span>{searchResults.length > 0 ? `${searchResults.length} 个结果` : '输入账号或手机号'}</span>
+          <div className="quick-action-row">
+            <button className={`secondary-button compact ${tabFilter === 'all' ? 'active' : ''}`} onClick={() => setTabFilter('all')}>全部</button>
+            <button className={`secondary-button compact ${tabFilter === 'direct' ? 'active' : ''}`} onClick={() => setTabFilter('direct')}>联系人</button>
+            <button className={`secondary-button compact ${tabFilter === 'groups' ? 'active' : ''}`} onClick={() => setTabFilter('groups')}>群聊</button>
+            <button className="primary-button compact" onClick={() => setGroupCreatorOpen(true)}>新建</button>
           </div>
           <div className="search-row">
             <input
@@ -1511,14 +1806,36 @@ function MainView({
                     <strong>{displayName(entry)}</strong>
                     <span>@{entry.username}{entry.phone ? ` · ${entry.phone}` : ''}</span>
                   </div>
-                  <button className="secondary-button compact" onClick={() => addContact(entry.id)}>
-                    添加
+                  <button className="secondary-button compact" onClick={() => sendFriendRequest(entry.id)}>
+                    申请
                   </button>
                 </div>
               ))}
             </div>
           ) : null}
         </div>
+
+        {pendingIncomingCount > 0 ? (
+          <div className="panel request-panel">
+            <div className="panel-title-row">
+              <h3>好友申请</h3>
+              <span>{pendingIncomingCount}</span>
+            </div>
+            <div className="request-list">
+              {friendRequests.incoming.filter((request) => request.status === 'pending').map((request) => (
+                <div className="request-item" key={request.id}>
+                  <Avatar user={request.user} className="compact-avatar" />
+                  <div>
+                    <strong>{displayName(request.user)}</strong>
+                    <span>{request.message || `@${request.user.username}`}</span>
+                  </div>
+                  <button className="secondary-button compact" onClick={() => respondFriendRequest(request.id, 'reject')}>拒绝</button>
+                  <button className="primary-button compact" onClick={() => respondFriendRequest(request.id, 'accept')}>同意</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="panel contacts-panel">
           <div className="conversation-overview">
@@ -1597,7 +1914,7 @@ function MainView({
                       </div>
                       <div className="contact-meta">
                         <div className="contact-topline">
-                          <strong>{conversation.title}</strong>
+                          <strong>{conversation.pinned ? '置顶 · ' : ''}{conversation.title}</strong>
                           <span className="contact-time">{conversation.lastMessageAt ? formatMessageTime(conversation.lastMessageAt) : ''}</span>
                         </div>
                         <span>{conversation.subline}</span>
@@ -1617,6 +1934,13 @@ function MainView({
             </div>
           </div>
         </div>
+
+        <nav className="mobile-tabbar" aria-label="移动端主导航">
+          <button className={tabFilter === 'all' ? 'active' : ''} onClick={() => switchMobileTab('all')}>聊天</button>
+          <button className={tabFilter === 'direct' ? 'active' : ''} onClick={() => switchMobileTab('direct')}>通讯录</button>
+          <button className={tabFilter === 'groups' ? 'active' : ''} onClick={() => switchMobileTab('groups')}>群聊</button>
+          <button onClick={() => switchMobileTab('profile')}>我的</button>
+        </nav>
       </aside>
 
       <main className={`chat-stage ${selectedConversation ? 'mobile-chat-active' : ''}`}>
@@ -1630,7 +1954,7 @@ function MainView({
         {selectedConversation ? (
           <>
             <header className="chat-topbar">
-              <button className="mobile-back-button" onClick={() => setSelectedConversation(null)}>
+              <button className="mobile-back-button" onClick={closeConversation}>
                 返回
               </button>
               <div className="chat-user">
@@ -1663,18 +1987,57 @@ function MainView({
                 </div>
               </div>
               <div className="chat-topbar-actions">
-                {selectedIsGroup ? (
-                  <button className="secondary-button compact" onClick={() => setAssistantOpen(true)}>
-                    我的群助理
+                <div className={`chat-menu ${conversationMenuOpen ? 'open' : ''}`}>
+                  <button
+                    className="chat-menu-trigger"
+                    type="button"
+                    aria-label="会话操作"
+                    onClick={() => setConversationMenuOpen((value) => !value)}
+                  >
+                    ...
                   </button>
-                ) : null}
-                <input
-                  className="message-search-input"
-                  type="text"
-                  placeholder="搜索当前会话消息"
-                  value={messageSearch}
-                  onChange={(event) => setMessageSearch(event.target.value)}
-                />
+                  {conversationMenuOpen ? (
+                    <div className="chat-menu-panel">
+                      <input
+                        className="message-search-input"
+                        type="text"
+                        placeholder="搜索当前会话"
+                        value={messageSearch}
+                        onChange={(event) => setMessageSearch(event.target.value)}
+                      />
+                      {selectedIsGroup ? (
+                        <button className="menu-item" onClick={() => {
+                          setAssistantOpen(true);
+                          setConversationMenuOpen(false);
+                        }}>
+                          我的群助理
+                        </button>
+                      ) : (
+                        <button className="menu-item danger" onClick={() => {
+                          removeSelectedContact();
+                          setConversationMenuOpen(false);
+                        }}>
+                          删除联系人
+                        </button>
+                      )}
+                      <button className="menu-item" onClick={() => {
+                        updateSelectedConversationPreference({ pinned: !selectedConversation.pinned });
+                        setConversationMenuOpen(false);
+                      }}>
+                        {selectedConversation.pinned ? '取消置顶' : '置顶会话'}
+                      </button>
+                      <button className="menu-item" onClick={() => {
+                        updateSelectedConversationPreference({ hidden: true });
+                        setConversationMenuOpen(false);
+                      }}>
+                        隐藏会话
+                      </button>
+                      <button className="menu-item danger" onClick={clearSelectedConversationMessages}>
+                        清空聊天记录
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </header>
 
@@ -1688,6 +2051,7 @@ function MainView({
                 filteredMessages.map((message, index) => {
                   const own = message.sender_id === user.id;
                   const prev = index > 0 ? filteredMessages[index - 1] : null;
+                  const deleted = isMessageDeleted(message);
                   return (
                     <div key={message.id}>
                       {shouldShowDayDivider(prev, message) ? (
@@ -1696,16 +2060,21 @@ function MainView({
                         </div>
                       ) : null}
                       <div className={`message-row ${own ? 'mine' : 'theirs'}`}>
-                        <div className={`message-bubble ${own ? 'mine' : 'theirs'}`}>
+                        <div className={`message-bubble ${own ? 'mine' : 'theirs'} ${deleted ? 'deleted' : ''}`}>
                           {selectedIsGroup && !own ? (
                             <div className="group-message-author">
                               {displayName(message.sender) || message.sender?.username || '成员'}
                             </div>
                           ) : null}
-                          <div className="message-content">{message.content}</div>
+                          <div className="message-content">{deleted ? '消息已撤回' : message.content}</div>
                           <div className="message-meta-row">
                             <span className="message-time">{formatTime(message.created_at)}</span>
                             {!selectedIsGroup && own ? <span className="message-read-state">{message.read_at ? '已读' : '已发送'}</span> : null}
+                            {own && !deleted ? (
+                              <button className="message-action-button" onClick={() => recallMessage(message)}>
+                                撤回
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -1722,11 +2091,54 @@ function MainView({
             </section>
 
             <footer className="composer">
-              <div className="quick-emoji-row">
-                {['😀', '👍', '😂', '🎉', '❤️', '🙏'].map((emoji) => (
-                  <button key={emoji} className="emoji-button" onClick={() => insertQuickEmoji(emoji)}>{emoji}</button>
-                ))}
+              <div className="composer-tools">
+                <button
+                  className={`composer-tool-button ${emojiPickerOpen ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => setEmojiPickerOpen((value) => !value)}
+                >
+                  <span className="tool-icon">☺</span>
+                  <span>表情</span>
+                </button>
+                <button
+                  className="composer-tool-button"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <span className="tool-icon">□</span>
+                  <span>文件</span>
+                </button>
+                <button
+                  className="composer-tool-button"
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                >
+                  <span className="tool-icon">◎</span>
+                  <span>拍照</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  className="hidden-file-input"
+                  type="file"
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                  onChange={handleMediaSelected}
+                />
+                <input
+                  ref={cameraInputRef}
+                  className="hidden-file-input"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleMediaSelected}
+                />
               </div>
+              {emojiPickerOpen ? (
+                <div className="emoji-picker">
+                  {['😀', '😁', '😂', '🤣', '😊', '😍', '😎', '😭', '😡', '👍', '👎', '👏', '🙏', '💪', '🎉', '❤️', '🔥', '✅', '❌', '🤝', '🤔', '👌', '😴', '🍻'].map((emoji) => (
+                    <button key={emoji} className="emoji-button" onClick={() => insertQuickEmoji(emoji)}>{emoji}</button>
+                  ))}
+                </div>
+              ) : null}
               <div className="composer-box">
                 <textarea
                   value={messageInput}
@@ -1740,8 +2152,8 @@ function MainView({
                   placeholder={selectedIsGroup ? '输入群消息，按 Enter 发送，Shift + Enter 换行' : '输入消息，按 Enter 发送，Shift + Enter 换行'}
                   rows={3}
                 />
-                <button className="primary-button send-button" onClick={sendMessage} disabled={!messageInput.trim() || sending}>
-                  {sending ? '发送中...' : '发送'}
+                <button className="send-button" onClick={sendMessage} disabled={!messageInput.trim() || sending} aria-label="发送消息">
+                  {sending ? '...' : '➤'}
                 </button>
               </div>
             </footer>

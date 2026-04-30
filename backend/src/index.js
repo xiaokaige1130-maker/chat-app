@@ -269,6 +269,111 @@ app.get('/api/contacts', authenticate, (req, res) => {
   res.json(store.listContactsForUser(req.userId));
 });
 
+app.get('/api/friend-requests', authenticate, (req, res) => {
+  res.json(store.listFriendRequests(req.userId));
+});
+
+app.post('/api/friend-requests', authenticate, (req, res) => {
+  const receiverId = Number(req.body.receiverId);
+  const message = String(req.body.message || '').trim().slice(0, 160);
+
+  if (!receiverId) {
+    return res.status(400).json({ error: 'Receiver ID required' });
+  }
+
+  if (receiverId === req.userId) {
+    return res.status(400).json({ error: '不能添加自己' });
+  }
+
+  const receiver = store.getUserById(receiverId);
+  if (!receiver) {
+    return res.status(404).json({ error: '用户不存在' });
+  }
+
+  if (store.contactExists(req.userId, receiverId)) {
+    return res.status(400).json({ error: '已经是联系人' });
+  }
+
+  const request = store.createFriendRequest(req.userId, receiverId, message, nowIso());
+  const sender = store.getUserById(req.userId);
+  const receiverSocket = userSockets.get(receiverId);
+  if (receiverSocket && sender) {
+    io.to(receiverSocket).emit('friend_request_received', {
+      request: {
+        id: request.id,
+        requesterId: request.requester_id,
+        receiverId: request.receiver_id,
+        message: request.message || '',
+        status: request.status,
+        createdAt: request.created_at,
+        user: store.toPublicUser(sender)
+      }
+    });
+  }
+
+  res.json({ request });
+});
+
+app.patch('/api/friend-requests/:id', authenticate, (req, res) => {
+  const requestId = Number(req.params.id);
+  const action = String(req.body.action || '').trim();
+  const request = store.getFriendRequestById(requestId);
+
+  if (!request || request.receiver_id !== req.userId) {
+    return res.status(404).json({ error: '好友申请不存在' });
+  }
+
+  if (request.status !== 'pending') {
+    return res.status(400).json({ error: '好友申请已处理' });
+  }
+
+  if (!['accept', 'reject'].includes(action)) {
+    return res.status(400).json({ error: 'Action must be accept or reject' });
+  }
+
+  const status = action === 'accept' ? 'accepted' : 'rejected';
+  const responded = store.respondToFriendRequest(requestId, status, nowIso());
+
+  if (status === 'accepted') {
+    store.addContactPair(request.requester_id, request.receiver_id, nowIso());
+  }
+
+  const requesterSocket = userSockets.get(request.requester_id);
+  if (requesterSocket) {
+    io.to(requesterSocket).emit('friend_request_updated', {
+      requestId,
+      status,
+      user: store.toPublicUser(store.getUserById(req.userId))
+    });
+  }
+
+  res.json({ request: responded });
+});
+
+app.patch('/api/conversations/:type/:id/preferences', authenticate, (req, res) => {
+  const type = String(req.params.type || '');
+  const conversationId = Number(req.params.id);
+
+  if (!['direct', 'group'].includes(type) || !conversationId) {
+    return res.status(400).json({ error: 'Invalid conversation' });
+  }
+
+  if (type === 'direct' && !store.contactExists(req.userId, conversationId)) {
+    return res.status(404).json({ error: '联系人不存在' });
+  }
+
+  if (type === 'group' && !store.isGroupMember(conversationId, req.userId)) {
+    return res.status(404).json({ error: '群聊不存在' });
+  }
+
+  const preference = store.updateConversationPreference(req.userId, type, conversationId, {
+    pinned: Boolean(req.body.pinned),
+    hidden: Boolean(req.body.hidden)
+  }, nowIso());
+
+  res.json({ preference });
+});
+
 app.get('/api/groups', authenticate, (req, res) => {
   res.json(store.listGroupsForUser(req.userId));
 });
@@ -307,7 +412,23 @@ app.get('/api/groups/:groupId/messages', authenticate, (req, res) => {
     return res.status(403).json({ error: 'Not a group member' });
   }
 
-  res.json(store.listGroupMessages(groupId));
+  res.json(store.listGroupMessagesForUser(groupId, req.userId));
+});
+
+app.post('/api/conversations/:type/:id/clear', authenticate, (req, res) => {
+  const type = req.params.type;
+  const conversationId = Number(req.params.id);
+
+  if (!['direct', 'group'].includes(type) || !conversationId) {
+    return res.status(400).json({ error: 'Invalid conversation' });
+  }
+
+  if (type === 'group' && !store.isGroupMember(conversationId, req.userId)) {
+    return res.status(403).json({ error: 'Not a group member' });
+  }
+
+  const result = store.clearConversationForUser(req.userId, type, conversationId, nowIso());
+  res.json(result);
 });
 
 app.get('/api/groups/:groupId/my-assistant', authenticate, (req, res) => {
@@ -428,6 +549,7 @@ app.post('/api/contacts', authenticate, (req, res) => {
 app.delete('/api/contacts/:id', authenticate, (req, res) => {
   const contactId = Number(req.params.id);
   store.removeContact(req.userId, contactId);
+  store.clearConversationPreference(req.userId, 'direct', contactId);
   res.json({ success: true });
 });
 
@@ -436,6 +558,32 @@ app.get('/api/messages/:contactId', authenticate, (req, res) => {
   const readAt = nowIso();
   store.markConversationRead(req.userId, contactId, readAt);
   res.json(store.listMessagesForPair(req.userId, contactId));
+});
+
+app.delete('/api/messages/direct/:messageId', authenticate, (req, res) => {
+  const messageId = Number(req.params.messageId);
+  const message = store.recallMessage(messageId, req.userId, nowIso());
+  if (!message) {
+    return res.status(404).json({ error: 'Message not found or cannot be recalled' });
+  }
+
+  const receiverSocket = userSockets.get(message.receiver_id);
+  if (receiverSocket) {
+    io.to(receiverSocket).emit('message-recalled', message);
+  }
+  socketEmitToUser(req.userId, 'message-recalled', message);
+  res.json({ message });
+});
+
+app.delete('/api/messages/group/:messageId', authenticate, (req, res) => {
+  const messageId = Number(req.params.messageId);
+  const message = store.recallGroupMessage(messageId, req.userId, nowIso());
+  if (!message || !store.isGroupMember(message.group_id, req.userId)) {
+    return res.status(404).json({ error: 'Message not found or cannot be recalled' });
+  }
+
+  io.to(`group:${message.group_id}`).emit('group-message-recalled', message);
+  res.json({ message });
 });
 
 app.get('/api/users/search', authenticate, (req, res) => {
@@ -448,6 +596,13 @@ app.get('/api/users/search', authenticate, (req, res) => {
 });
 
 const userSockets = new Map();
+
+function socketEmitToUser(userId, eventName, payload) {
+  const socketId = userSockets.get(userId);
+  if (socketId) {
+    io.to(socketId).emit(eventName, payload);
+  }
+}
 
 io.on('connection', (socket) => {
   const token = socket.handshake.auth.token;

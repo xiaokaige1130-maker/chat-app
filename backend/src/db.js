@@ -76,12 +76,43 @@ export function initDatabase({ dbPath, legacyDataPath }) {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requester_id INTEGER NOT NULL,
+      receiver_id INTEGER NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      responded_at TEXT,
+      UNIQUE(requester_id, receiver_id),
+      FOREIGN KEY(requester_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(receiver_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_prefs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      conversation_type TEXT NOT NULL,
+      conversation_id INTEGER NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      hidden INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, conversation_type, conversation_id),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sender_id INTEGER NOT NULL,
       receiver_id INTEGER NOT NULL,
       content TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      deleted_at TEXT,
+      deleted_by INTEGER,
       read_at TEXT,
       FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(receiver_id) REFERENCES users(id) ON DELETE CASCADE
@@ -118,8 +149,23 @@ export function initDatabase({ dbPath, legacyDataPath }) {
       sender_id INTEGER NOT NULL,
       content TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      deleted_at TEXT,
+      deleted_by INTEGER,
       FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
       FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_clears (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      conversation_type TEXT NOT NULL,
+      conversation_id INTEGER NOT NULL,
+      clear_before_id INTEGER NOT NULL DEFAULT 0,
+      cleared_at TEXT NOT NULL,
+      UNIQUE(user_id, conversation_type, conversation_id),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
 
@@ -145,8 +191,16 @@ export function initDatabase({ dbPath, legacyDataPath }) {
   ensureColumn(db, 'users', 'online', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'last_seen', 'TEXT');
   ensureColumn(db, 'messages', 'read_at', 'TEXT');
+  ensureColumn(db, 'messages', 'deleted_at', 'TEXT');
+  ensureColumn(db, 'messages', 'deleted_by', 'INTEGER');
+  ensureColumn(db, 'group_messages', 'deleted_at', 'TEXT');
+  ensureColumn(db, 'group_messages', 'deleted_by', 'INTEGER');
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_contacts_user_id ON contacts(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_friend_requests_receiver ON friend_requests(receiver_id, status)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_friend_requests_requester ON friend_requests(requester_id, status)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_conversation_prefs_user ON conversation_prefs(user_id, conversation_type, conversation_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_conversation_clears_user ON conversation_clears(user_id, conversation_type, conversation_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, receiver_id, id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_receiver_read ON messages(receiver_id, sender_id, read_at)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_online ON users(online)');
@@ -267,7 +321,7 @@ export function createStore(db) {
         u.online,
         u.last_seen,
         (
-          SELECT m.content
+          SELECT CASE WHEN m.deleted_at IS NULL THEN m.content ELSE '消息已撤回' END
           FROM messages m
           WHERE
             (m.sender_id = c.user_id AND m.receiver_id = c.contact_id) OR
@@ -288,11 +342,17 @@ export function createStore(db) {
           SELECT COUNT(*)
           FROM messages m
           WHERE m.sender_id = c.contact_id AND m.receiver_id = c.user_id AND m.read_at IS NULL
-        ) AS unread_count
+        ) AS unread_count,
+        COALESCE(cp.pinned, 0) AS pinned,
+        COALESCE(cp.hidden, 0) AS hidden
       FROM contacts c
       JOIN users u ON u.id = c.contact_id
+      LEFT JOIN conversation_prefs cp
+        ON cp.user_id = c.user_id
+        AND cp.conversation_type = 'direct'
+        AND cp.conversation_id = c.contact_id
       WHERE c.user_id = ?
-      ORDER BY COALESCE(last_message_at, u.created_at) DESC, u.id DESC
+      ORDER BY COALESCE(cp.pinned, 0) DESC, COALESCE(last_message_at, u.created_at) DESC, u.id DESC
     `),
     listOnlineUsers: db.prepare('SELECT * FROM users WHERE online = 1 AND id != ? ORDER BY id DESC'),
     hasContact: db.prepare('SELECT id FROM contacts WHERE user_id = ? AND contact_id = ?'),
@@ -301,6 +361,61 @@ export function createStore(db) {
       VALUES (?, ?, ?)
     `),
     deleteContact: db.prepare('DELETE FROM contacts WHERE user_id = ? AND contact_id = ?'),
+    deleteConversationPref: db.prepare('DELETE FROM conversation_prefs WHERE user_id = ? AND conversation_type = ? AND conversation_id = ?'),
+    upsertConversationPref: db.prepare(`
+      INSERT INTO conversation_prefs (user_id, conversation_type, conversation_id, pinned, hidden, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, conversation_type, conversation_id)
+      DO UPDATE SET pinned = excluded.pinned, hidden = excluded.hidden, updated_at = excluded.updated_at
+    `),
+    getPendingFriendRequest: db.prepare(`
+      SELECT *
+      FROM friend_requests
+      WHERE requester_id = ? AND receiver_id = ? AND status = 'pending'
+      LIMIT 1
+    `),
+    getFriendRequestById: db.prepare('SELECT * FROM friend_requests WHERE id = ?'),
+    createFriendRequest: db.prepare(`
+      INSERT INTO friend_requests (requester_id, receiver_id, message, status, created_at, responded_at)
+      VALUES (?, ?, ?, 'pending', ?, NULL)
+      ON CONFLICT(requester_id, receiver_id)
+      DO UPDATE SET message = excluded.message, status = 'pending', created_at = excluded.created_at, responded_at = NULL
+    `),
+    updateFriendRequestStatus: db.prepare(`
+      UPDATE friend_requests
+      SET status = ?, responded_at = ?
+      WHERE id = ?
+    `),
+    listIncomingFriendRequests: db.prepare(`
+      SELECT
+        fr.*,
+        u.username AS requester_username,
+        u.nickname AS requester_nickname,
+        u.avatar_url AS requester_avatar_url,
+        u.phone AS requester_phone,
+        u.created_at AS requester_created_at,
+        u.online AS requester_online,
+        u.last_seen AS requester_last_seen
+      FROM friend_requests fr
+      JOIN users u ON u.id = fr.requester_id
+      WHERE fr.receiver_id = ?
+      ORDER BY fr.status = 'pending' DESC, fr.created_at DESC
+    `),
+    listOutgoingFriendRequests: db.prepare(`
+      SELECT
+        fr.*,
+        u.username AS receiver_username,
+        u.nickname AS receiver_nickname,
+        u.avatar_url AS receiver_avatar_url,
+        u.phone AS receiver_phone,
+        u.created_at AS receiver_created_at,
+        u.online AS receiver_online,
+        u.last_seen AS receiver_last_seen
+      FROM friend_requests fr
+      JOIN users u ON u.id = fr.receiver_id
+      WHERE fr.requester_id = ?
+      ORDER BY fr.status = 'pending' DESC, fr.created_at DESC
+    `),
     listMessages: db.prepare(`
       SELECT *
       FROM messages
@@ -308,6 +423,30 @@ export function createStore(db) {
         (sender_id = ? AND receiver_id = ?) OR
         (sender_id = ? AND receiver_id = ?)
       ORDER BY id ASC
+    `),
+    getConversationClear: db.prepare(`
+      SELECT clear_before_id
+      FROM conversation_clears
+      WHERE user_id = ? AND conversation_type = ? AND conversation_id = ?
+      LIMIT 1
+    `),
+    upsertConversationClear: db.prepare(`
+      INSERT INTO conversation_clears (user_id, conversation_type, conversation_id, clear_before_id, cleared_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, conversation_type, conversation_id)
+      DO UPDATE SET clear_before_id = excluded.clear_before_id, cleared_at = excluded.cleared_at
+    `),
+    getMaxDirectMessageId: db.prepare(`
+      SELECT COALESCE(MAX(id), 0) AS max_id
+      FROM messages
+      WHERE
+        (sender_id = ? AND receiver_id = ?) OR
+        (sender_id = ? AND receiver_id = ?)
+    `),
+    getMaxGroupMessageId: db.prepare(`
+      SELECT COALESCE(MAX(id), 0) AS max_id
+      FROM group_messages
+      WHERE group_id = ?
     `),
     markConversationRead: db.prepare(`
       UPDATE messages
@@ -327,6 +466,11 @@ export function createStore(db) {
       VALUES (?, ?, ?, ?, NULL)
     `),
     getMessageById: db.prepare('SELECT * FROM messages WHERE id = ?'),
+    recallMessage: db.prepare(`
+      UPDATE messages
+      SET deleted_at = ?, deleted_by = ?, content = ''
+      WHERE id = ? AND sender_id = ? AND deleted_at IS NULL
+    `),
     updatePresence: db.prepare('UPDATE users SET online = ?, last_seen = ? WHERE id = ?'),
     createGroup: db.prepare(`
       INSERT INTO groups (name, owner_id, created_at)
@@ -348,7 +492,7 @@ export function createStore(db) {
           WHERE gm2.group_id = g.id
         ) AS member_count,
         (
-          SELECT gm.content
+          SELECT CASE WHEN gm.deleted_at IS NULL THEN gm.content ELSE '消息已撤回' END
           FROM group_messages gm
           WHERE gm.group_id = g.id
           ORDER BY gm.id DESC
@@ -360,9 +504,15 @@ export function createStore(db) {
           WHERE gm.group_id = g.id
           ORDER BY gm.id DESC
           LIMIT 1
-        ) AS last_message_at
+        ) AS last_message_at,
+        COALESCE(cp.pinned, 0) AS pinned,
+        COALESCE(cp.hidden, 0) AS hidden
       FROM groups g
       JOIN group_members membership ON membership.group_id = g.id
+      LEFT JOIN conversation_prefs cp
+        ON cp.user_id = membership.user_id
+        AND cp.conversation_type = 'group'
+        AND cp.conversation_id = g.id
       WHERE g.id = ? AND membership.user_id = ?
       LIMIT 1
     `),
@@ -378,7 +528,7 @@ export function createStore(db) {
           WHERE gm2.group_id = g.id
         ) AS member_count,
         (
-          SELECT gm.content
+          SELECT CASE WHEN gm.deleted_at IS NULL THEN gm.content ELSE '消息已撤回' END
           FROM group_messages gm
           WHERE gm.group_id = g.id
           ORDER BY gm.id DESC
@@ -390,11 +540,17 @@ export function createStore(db) {
           WHERE gm.group_id = g.id
           ORDER BY gm.id DESC
           LIMIT 1
-        ) AS last_message_at
+        ) AS last_message_at,
+        COALESCE(cp.pinned, 0) AS pinned,
+        COALESCE(cp.hidden, 0) AS hidden
       FROM groups g
       JOIN group_members membership ON membership.group_id = g.id
+      LEFT JOIN conversation_prefs cp
+        ON cp.user_id = membership.user_id
+        AND cp.conversation_type = 'group'
+        AND cp.conversation_id = g.id
       WHERE membership.user_id = ?
-      ORDER BY COALESCE(last_message_at, g.created_at) DESC, g.id DESC
+      ORDER BY COALESCE(cp.pinned, 0) DESC, COALESCE(last_message_at, g.created_at) DESC, g.id DESC
     `),
     isGroupMember: db.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?'),
     listGroupIdsForUser: db.prepare('SELECT group_id FROM group_members WHERE user_id = ? ORDER BY group_id ASC'),
@@ -423,6 +579,11 @@ export function createStore(db) {
       JOIN users u ON u.id = gm.sender_id
       WHERE gm.id = ?
       LIMIT 1
+    `),
+    recallGroupMessage: db.prepare(`
+      UPDATE group_messages
+      SET deleted_at = ?, deleted_by = ?, content = ''
+      WHERE id = ? AND sender_id = ? AND deleted_at IS NULL
     `),
     getGroupAssistant: db.prepare(`
       SELECT *
@@ -463,7 +624,33 @@ export function createStore(db) {
       memberCount: Number(group.member_count || 0),
       lastMessage: group.last_message || '',
       lastMessageAt: group.last_message_at || '',
+      pinned: Boolean(group.pinned),
+      hidden: Boolean(group.hidden),
       conversationType: 'group'
+    };
+  }
+
+  function toFriendRequest(row, userPrefix) {
+    const target = {
+      id: row[`${userPrefix}_id`] || (userPrefix === 'requester' ? row.requester_id : row.receiver_id),
+      username: row[`${userPrefix}_username`],
+      nickname: row[`${userPrefix}_nickname`] || '',
+      avatar_url: row[`${userPrefix}_avatar_url`] || '',
+      phone: row[`${userPrefix}_phone`] || '',
+      created_at: row[`${userPrefix}_created_at`] || '',
+      online: row[`${userPrefix}_online`] || 0,
+      last_seen: row[`${userPrefix}_last_seen`] || null
+    };
+
+    return {
+      id: row.id,
+      requesterId: row.requester_id,
+      receiverId: row.receiver_id,
+      message: row.message || '',
+      status: row.status,
+      createdAt: row.created_at,
+      respondedAt: row.responded_at || null,
+      user: toPublicUser(target)
     };
   }
 
@@ -474,12 +661,27 @@ export function createStore(db) {
       sender_id: row.sender_id,
       content: row.content,
       created_at: row.created_at,
+      deleted_at: row.deleted_at || null,
+      deleted_by: row.deleted_by || null,
       sender: {
         id: row.sender_id,
         username: row.sender_username,
         nickname: row.sender_nickname || '',
         avatarUrl: row.sender_avatar_url || ''
       }
+    };
+  }
+
+  function toDirectMessage(row) {
+    return {
+      id: row.id,
+      sender_id: row.sender_id,
+      receiver_id: row.receiver_id,
+      content: row.content,
+      created_at: row.created_at,
+      read_at: row.read_at || null,
+      deleted_at: row.deleted_at || null,
+      deleted_by: row.deleted_by || null
     };
   }
 
@@ -514,6 +716,8 @@ export function createStore(db) {
         lastMessage: row.last_message || '',
         lastMessageAt: row.last_message_at || '',
         unreadCount: Number(row.unread_count || 0),
+        pinned: Boolean(row.pinned),
+        hidden: Boolean(row.hidden),
         conversationType: 'direct'
       }));
     },
@@ -533,8 +737,39 @@ export function createStore(db) {
     removeContact(userId, contactId) {
       statements.deleteContact.run(userId, contactId);
     },
+    updateConversationPreference(userId, type, conversationId, payload, updatedAt) {
+      const pinned = payload.pinned ? 1 : 0;
+      const hidden = payload.hidden ? 1 : 0;
+      statements.upsertConversationPref.run(userId, type, conversationId, pinned, hidden, updatedAt);
+      return { type, id: conversationId, pinned: Boolean(pinned), hidden: Boolean(hidden) };
+    },
+    clearConversationPreference(userId, type, conversationId) {
+      statements.deleteConversationPref.run(userId, type, conversationId);
+    },
+    createFriendRequest(requesterId, receiverId, message, createdAt) {
+      statements.createFriendRequest.run(requesterId, receiverId, message, createdAt);
+      return statements.getPendingFriendRequest.get(requesterId, receiverId);
+    },
+    getFriendRequestById(requestId) {
+      return statements.getFriendRequestById.get(requestId) || null;
+    },
+    listFriendRequests(userId) {
+      return {
+        incoming: statements.listIncomingFriendRequests.all(userId).map((row) => toFriendRequest(row, 'requester')),
+        outgoing: statements.listOutgoingFriendRequests.all(userId).map((row) => toFriendRequest(row, 'receiver'))
+      };
+    },
+    respondToFriendRequest(requestId, status, respondedAt) {
+      statements.updateFriendRequestStatus.run(status, respondedAt, requestId);
+      return this.getFriendRequestById(requestId);
+    },
     listMessagesForPair(userId, contactId) {
-      return statements.listMessages.all(userId, contactId, contactId, userId);
+      const clear = statements.getConversationClear.get(userId, 'direct', contactId);
+      const clearBeforeId = Number(clear?.clear_before_id || 0);
+      return statements.listMessages
+        .all(userId, contactId, contactId, userId)
+        .filter((message) => Number(message.id) > clearBeforeId)
+        .map(toDirectMessage);
     },
     markConversationRead(userId, contactId, readAt) {
       statements.markConversationRead.run(readAt, contactId, userId);
@@ -544,7 +779,22 @@ export function createStore(db) {
     },
     createMessage(senderId, receiverId, content, createdAt) {
       const result = statements.createMessage.run(senderId, receiverId, content, createdAt);
-      return statements.getMessageById.get(Number(result.lastInsertRowid));
+      return toDirectMessage(statements.getMessageById.get(Number(result.lastInsertRowid)));
+    },
+    recallMessage(messageId, userId, deletedAt) {
+      const current = statements.getMessageById.get(messageId);
+      if (!current || current.sender_id !== userId || current.deleted_at) {
+        return null;
+      }
+      statements.recallMessage.run(deletedAt, userId, messageId, userId);
+      return toDirectMessage(statements.getMessageById.get(messageId));
+    },
+    clearConversationForUser(userId, type, conversationId, clearedAt) {
+      const maxId = type === 'group'
+        ? Number(statements.getMaxGroupMessageId.get(conversationId)?.max_id || 0)
+        : Number(statements.getMaxDirectMessageId.get(userId, conversationId, conversationId, userId)?.max_id || 0);
+      statements.upsertConversationClear.run(userId, type, conversationId, maxId, clearedAt);
+      return { type, id: conversationId, clearBeforeId: maxId, clearedAt };
     },
     updatePresence(userId, online, lastSeen) {
       statements.updatePresence.run(online ? 1 : 0, lastSeen, userId);
@@ -593,9 +843,25 @@ export function createStore(db) {
     listGroupMessages(groupId) {
       return statements.listGroupMessages.all(groupId).map(toGroupMessage);
     },
+    listGroupMessagesForUser(groupId, userId) {
+      const clear = statements.getConversationClear.get(userId, 'group', groupId);
+      const clearBeforeId = Number(clear?.clear_before_id || 0);
+      return statements.listGroupMessages
+        .all(groupId)
+        .filter((message) => Number(message.id) > clearBeforeId)
+        .map(toGroupMessage);
+    },
     createGroupMessage(groupId, senderId, content, createdAt) {
       const result = statements.createGroupMessage.run(groupId, senderId, content, createdAt);
       return toGroupMessage(statements.getGroupMessageById.get(Number(result.lastInsertRowid)));
+    },
+    recallGroupMessage(messageId, userId, deletedAt) {
+      const current = statements.getGroupMessageById.get(messageId);
+      if (!current || current.sender_id !== userId || current.deleted_at) {
+        return null;
+      }
+      statements.recallGroupMessage.run(deletedAt, userId, messageId, userId);
+      return toGroupMessage(statements.getGroupMessageById.get(messageId));
     },
     getMyGroupAssistant(groupId, userId) {
       let assistant = statements.getGroupAssistant.get(groupId, userId);
